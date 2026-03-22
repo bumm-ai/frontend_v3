@@ -1,0 +1,69 @@
+Cookie Policy
+
+August 01, 2025
+
+
+This Cookie Policy explains how and why cookies and similar technologies are used on the Bumm website and application (the “Service”). It should be read together with our Privacy Policy. If you do not agree with the use of non-essential cookies, you can refuse or withdraw consent at any time via Cookie Settings.
+
+	1.	Scope and definitions
+1.1. “We”, “our”, and “us” refer to the Bumm team operating the Service until a company is incorporated. “You” or “your” refers to any individual or entity using the Service.
+1.2. “Cookies” are small data files stored on your device by your browser. “First-party cookies” are set by Bumm; “third-party cookies” are set by providers other than Bumm.
+1.3. We also use similar technologies such as local storage, session storage, and pixels/tags. For simplicity, we refer to all of these as “cookies”.
+
+	2.	How we use cookies
+2.1. We use cookies to make the Service work (strictly necessary cookies) and, subject to your consent where required by law, to measure performance, improve the user experience, and support marketing.
+2.2. In the UK/EEA, non-essential cookies analytics or advertising are not activated until you consent through the cookie banner or Cookie Settings. You can change your preferences at any time.
+
+	3.	Cookie categories
+3.1. Strictly necessary (always active). Required for core functionality such as page navigation, session management, security, and consent recording. These cookies do not require consent.
+3.2. Performance and analytics (consent-based). Help us understand how the Service is used, diagnose errors, and improve performance. Tools may include Google Analytics, PostHog, and Datadog.
+3.3. Advertising and marketing (consent-based). Help us understand the effectiveness of our outreach and show relevant content. Tools may include Meta (Facebook) Pixel.
+3.4. Functionality (consent-based, if used). Remember choices such as language or UI preferences.
+	
+	4.	Third-party tools we use or may use
+The cookie names and lifetimes listed below are indicative; vendors may change them from time to time.
+
+4.1. Google Analytics (performance/analytics)
+Purpose: measure usage, identify pages and features that need improvement, aggregate statistics.
+Examples of cookies: _ga (up to 2 years), ga (up to 2 years), _gid (24 hours). Legacy properties may set _gat (1 minute).
+Opt-out: you can disable analytics in Cookie Settings, use your browser’s settings, or install the Google Analytics Opt-out Browser Add-on.
+
+4.2. PostHog (product analytics)
+Purpose: product analytics, funnels, retention, feature usage, session replay (if enabled).
+Examples of cookies: ph_phc_posthog (up to 13 months), ph_posthog (up to 13 months). Depending on configuration, PostHog may use first-party cookies only.
+Opt-out: disable in Cookie Settings or use PostHog’s built-in opt-out mechanism if provided.
+
+4.3. Datadog (RUM/performance monitoring)
+Purpose: real-user monitoring (RUM), error tracking, performance metrics.
+Examples of cookies: dd_s (about 15 minutes), dd_cookie_test* (session). Names and durations may vary based on configuration.
+Opt-out: disable in Cookie Settings or adjust your browser settings.
+
+4.4. Meta (Facebook) Pixel (advertising/marketing)
+Purpose: measure the effectiveness of our outreach and understand how visitors interact with our site after seeing our content on Meta platforms.
+Examples of cookies: _fbp (3 months); Meta may also set additional cookies (for example, fr) depending on your account/browser.
+Opt-out: disable in Cookie Settings, manage your ad preferences in your Meta account, or use browser settings.
+	
+	5.	Legal bases and consent
+5.1. Strictly necessary cookies are used based on our legitimate interests in providing a secure and functional Service.
+5.2. Performance/analytics, functionality, and advertising cookies are used based on your consent where required by law. You can give or withdraw consent at any time via Cookie Settings without affecting the lawfulness of processing before withdrawal.
+	
+	6.	Managing cookies
+6.1. Cookie banner and settings. On your first visit (and periodically thereafter), you will see a banner allowing you to accept, reject, or customise non-essential cookies by category. You can change your choices at any time via the “Cookie Settings” link in the footer.
+6.2. Browser settings. Most browsers let you block, delete, or limit cookies. If you block strictly necessary cookies, some parts of the Service may not function.
+6.3. Do Not Track and Global Privacy Control. If your browser sends a recognised global privacy signal, we will treat it as a request to opt out of non-essential cookies where legally required.
+	
+	7.	International transfers
+7.1. Some third-party providers may process cookie-related data outside your country. Where personal data is transferred from the UK/EEA to countries without an adequacy decision, appropriate safeguards (for example, UK IDTA or EU Standard Contractual Clauses) are applied by those providers. See our Privacy Policy for more information.
+	8.	Data retention
+8.1. Cookie lifetimes vary. Session cookies expire when you close your browser. Persistent cookies may last from minutes to months (analytics up to 2 years; marketing typically up to 3 months; etc). We endeavour to limit retention to what is necessary for the stated purpose.
+	
+	9.	Children
+9.1. The Service is not directed to children under 13. We do not knowingly place non-essential cookies for users we know are under 13.
+	
+	10.	Changes to this policy
+10.1. We may update this Cookie Policy to reflect changes in our practices, technologies, legal requirements, or vendor settings. When we update the policy, we will revise the Effective date above. Your continued use of the Service after an update indicates acceptance of the revised policy.
+
+	11.	Contact
+If you have questions about this Cookie Policy or our use of cookies and similar technologies, contact: contact@bumm.io
+
+

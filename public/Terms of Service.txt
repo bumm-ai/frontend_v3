@@ -1,0 +1,109 @@
+Terms of Service
+
+August 01, 2025
+
+This document is provided for informational purposes only and does not constitute legal advice. Please read these Terms carefully. If you do not agree with any part of them, you should not use the Service.
+
+	1.	Scope and definitions
+1.1. “Bumm”, “we”, “us”, and “our” refer to the team operating the Service until a company is incorporated. Once incorporated, the company’s legal name and contact details will replace the “Bumm team”.
+1.2. “Service” means the Bumm website, application, and related services, including AI-assisted generation, review, simulation, and deployment tools for Solana smart contracts/programs, and any Solana Action/Blink endpoints we publish.
+1.3. “User”, “you”, and “your” refer to any individual or entity accessing or using the Service.
+1.4. “Credits” means usage allowances you may receive for free, earn through promotions/referrals, or purchase using Solana (SOL) to access features of the Service.
+
+	2.	Eligibility and acceptance
+2.1. By accessing or using the Service, you agree to be bound by these Terms of Service (“Terms”). If you use the Service on behalf of an organisation, you represent that you have authority to bind that organisation to these Terms.
+2.2. Users must be at least 13 years old. If you are between 13 and 17, you may use the Service only with parental or legal guardian consent where required by law.
+2.3. Additional policies referenced in these Terms, including the Privacy Policy, form part of your agreement with us.
+
+	3.	Non-custodial model and transactions
+3.1. The Service is strictly non-custodial. We do not hold or control private keys or seed phrases, and we do not sign or broadcast transactions on your behalf.
+3.2. The Service may construct or serialise transactions for your review and convenience. Execution of any blockchain transaction always requires your explicit signature using a compatible wallet you control.
+3.3. You are solely responsible for securing your wallet, devices, and credentials, and for all actions taken from your accounts and wallets.
+
+	4.	The Service; beta and changes
+4.1. The Service provides AI-assisted tools to help generate, review, simulate, and deploy Solana smart contracts/programs, and may expose Solana Action/Blink endpoints to facilitate execution from compatible interfaces.
+4.2. Some features may be labeled “beta”, “experimental”, or similar. Such features may be modified, limited, or discontinued at any time without notice and may be subject to additional risks, errors, or instability.
+4.3. We may update, change, or suspend parts of the Service at any time to maintain functionality, security, or compliance, or to improve the user experience.
+
+	5.	Accounts and access
+5.1. You must provide accurate information and keep it up to date. You agree not to share or misuse access credentials.
+5.2. We may collect limited information such as usage metrics, generated artefacts, logs, and your public wallet address, as described in the Privacy Policy.
+5.3. We may suspend or terminate access if we reasonably believe you violate these Terms, applicable law, or third-party rights, or if we detect security or abuse risks.
+
+	6.	Credits, billing, and promotions
+6.1. You may receive free trial Credits or promotional Credits (including referral rewards) at our discretion. We may impose conditions or expiration dates for promotional Credits.
+6.2. You may purchase additional Credits using Solana (SOL). All purchases are final and non-refundable unless a refund is required by law. Network fees and taxes are your responsibility.
+6.3. Credits have no cash value, are non-transferable (unless we explicitly permit), and may only be used within the Service under these Terms.
+6.4. We may adjust pricing, Credit consumption rates, or promotional programs from time to time with notice posted on the site.
+
+	7.	User content and generated artefacts
+7.1. As between you and us, you own the code and artefacts you generate using the Service, except for third-party materials and our platform IP.
+7.2. You grant us a limited, non-exclusive, royalty-free license to store and use anonymised artefacts (snippets, logs, etc) solely to provide, secure, and improve the Service.
+7.3. You are responsible for ensuring that any content you submit or generate does not violate law or third-party rights, including intellectual property rights.
+
+	8.	Acceptable use
+8.1. You agree not to: (a) use the Service to create or distribute malicious, fraudulent, or harmful programs (“drainers” or malware, etc); (b) reverse engineer, interfere with, or disrupt the Service; (c) attempt to gain unauthorised access; (d) misrepresent your identity or affiliation; or (e) use the Service in violation of law, these Terms, or third-party rights.
+8.2. We may restrict, suspend, or terminate your access if we reasonably believe you have engaged in prohibited conduct.
+
+	9.	Safety; your responsibilities
+9.1. The Service may generate code that requires careful review. We do not guarantee that generated code is error-free, secure, or fit for any purpose. You are solely responsible for auditing, testing, and validating any code before deploying to mainnet.
+9.2. We do not provide financial, investment, legal, or tax advice. You are solely responsible for compliance with all applicable laws and regulations and for your decisions to deploy or use code on any network.
+9.3. Blockchain networks are subject to risks including congestion, forks, reorgs, halts, and changes in transaction fees (including priority fee dynamics). We do not control network conditions or third-party infrastructure and are not responsible for their performance or availability.
+
+	10.	Third-party services and dependencies
+10.1. The Service may depend on or interoperate with third-party services (AI model APIs, RPC providers, cloud hosting, wallets, explorers, etc). Your use of third-party services may be subject to their separate terms and policies.
+10.2. We are not responsible for third-party services, their availability, accuracy, or security, and we make no warranties regarding them.
+
+	11.	Intellectual property; feedback
+11.1. We (or our licensors) own all right, title, and interest in and to the Service, including software, interfaces, website content, documentation, and trademarks, excluding content and code you generate.
+11.2. If you provide suggestions, ideas, or feedback, you grant us a perpetual, irrevocable, worldwide, royalty-free license to use them without restriction or obligation.
+
+	12.	Confidentiality
+12.1. If either party discloses non-public information labeled or reasonably considered confidential, the receiving party will use it solely for the permitted purpose and protect it using reasonable measures, except where disclosure is required by law.
+
+	13.	Warranties and disclaimers
+13.1. To the maximum extent permitted by law, the Service is provided “as is” and “as available” without warranties of any kind, whether express, implied, or statutory, including warranties of merchantability, fitness for a particular purpose, title, and non-infringement.
+13.2. Without limiting the foregoing, we do not warrant that the Service or any generated code will be accurate, error-free, secure, uninterrupted, compliant with any specific standard, or suitable for your use case.
+
+	14.	Limitation of liability
+14.1. To the maximum extent permitted by law, we and our contributors will not be liable for any indirect, incidental, special, consequential, or punitive damages, or for lost profits, lost tokens, lost funds, lost data, loss of goodwill, or business interruption arising out of or related to the Service or these Terms, even if advised of the possibility of such damages.
+14.2. To the maximum extent permitted by law, our aggregate liability for all claims arising out of or relating to the Service or these Terms will not exceed the amount you paid for Credits during the six months preceding the event giving rise to the claim.
+14.3. Some jurisdictions do not allow certain exclusions or limitations; in that case, the exclusions and limitations will apply to the fullest extent permitted by applicable law.
+
+	15.	Indemnification
+15.1. You will defend, indemnify, and hold harmless Bumm and its contributors from and against any claims, liabilities, damages, losses, and expenses (including reasonable attorneys’ fees) arising from or relating to: (a) your use of the Service; (b) your generated code, deployments, or transactions; (c) your violation of these Terms or applicable law; or (d) your infringement of any third-party rights.
+
+	16.	Export controls and sanctions
+16.1. You represent that you are not subject to sanctions or located in a jurisdiction embargoed by the UK, EU, or US. You agree to comply with all applicable export control and sanctions laws.
+
+	17.	Government use
+17.1. If you are a government entity, your use of the Service is subject to these commercial Terms. We do not provide unique warranties or obligations beyond those stated herein.
+
+	18.	Governing law; dispute resolution
+18.1. These Terms are governed by the laws of England and Wales, without regard to conflict-of-law principles.
+18.2. Any dispute, controversy, or claim arising out of or relating to these Terms or the Service will be finally resolved by binding arbitration in London, in English, under rules reasonably selected by Bumm (for example, LCIA), unless the parties agree otherwise in writing. Either party may seek injunctive or equitable relief in any court of competent jurisdiction to protect intellectual property or confidential information.
+18.3. To the extent permitted by law, the parties waive any right to participate in class, consolidated, or representative proceedings.
+
+	19.	Suspension, termination, and survival
+19.1. We may suspend or terminate your access to the Service if you violate these Terms, law, or third-party rights, or if continued provision poses security, compliance, or operational risks.
+19.2. Upon termination, your right to use the Service ceases immediately, and you remain responsible for any outstanding obligations. Sections intended by their nature to survive (including ownership, confidentiality, disclaimers, limitations of liability, indemnities, and dispute resolution) will survive termination.
+
+	20.	Force major
+20.1. We will not be liable for any delay or failure to perform due to circumstances beyond our reasonable control, including acts of God, natural disasters, war, terrorism, labor disputes, utility failures, widespread network outages, or regulatory actions.
+
+	21.	Assignment
+21.1. You may not assign or transfer these Terms without our prior written consent. We may assign or transfer these Terms in connection with a merger, acquisition, reorganisation, or sale of assets.
+
+	22.	Notices
+22.1. We may provide notices by posting on the site, within the Service, or by email to the address associated with your account (if provided). You are responsible for keeping your contact details current.
+
+	23.	Changes to these Terms
+23.1. We may update these Terms from time to time to reflect changes in our practices, technologies, legal requirements, or other factors. When we do, we will revise the Effective date at the top of this document. Your continued use of the Service after an update constitutes acceptance of the revised Terms.
+
+	24.	Entire agreement; severability; no waiver
+24.1. These Terms (including documents referenced herein) are the entire agreement between you and us regarding the Service and supersede prior or contemporaneous agreements on the subject matter.
+24.2. If any provision of these Terms is found unenforceable, the remainder will remain in full force and effect, and the unenforceable provision will be replaced by an enforceable term that most closely reflects the original intent.
+24.3. Our failure to enforce any provision is not a waiver of our right to do so later.
+
+	25.	Contact
+Questions about these Terms or the Service: contact@bumm.io.
