@@ -1,125 +1,104 @@
-// API client for interacting with Bumm backend
-// Import configuration from new file
-import { API_BASE_URL, TASK_STATUS, isTaskCompleted, isTaskError, getStatusDisplayName, getProgressFromStatus } from '@/config/api';
-import { apiClient as newApiClient } from '@/services/api';
-import { bummService, userService } from '@/services/bummService';
+// API Types — Bumm AI Backend v3
+// Single source of truth for all REST + WebSocket types.
+// Matches backend_v3 Pydantic models exactly.
 
-// API data types
-export interface BummProject {
-  uid: string;
-  name: string | null;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  task: 'generate' | 'audit' | 'deploy' | 'build';
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+export interface ChallengeResponse {
+  nonce: string;   // 64-char hex
+  message: string; // human-readable sign message
 }
 
-export interface BummListResponse {
-  bumms: BummProject[];
-  created_at: number;
+export interface AuthTokens {
+  access_token: string;
+  refresh_token: string;
+  token_type: 'bearer';
+  expires_in: number; // seconds (900 = 15 min)
 }
 
-export interface BummListRequest {
-  limit?: number;
-  created_at?: number | null;
+// ── Contracts ─────────────────────────────────────────────────────────────────
+
+export type Network = 'devnet' | 'testnet' | 'mainnet-beta';
+
+export interface ContractRequest {
+  prompt: string;    // 1–10 000 chars
+  network?: Network; // default "devnet"
 }
 
-export interface BummGenerateRequest {
-  text: string;
-}
-
-export interface BummGenerateResponse {
+export interface ContractCreated {
   uid: string;
   status: string;
-  code?: string; // Generated contract code
+  status_url: string;
+  ws_url: string;
 }
 
-export interface BummStatusResponse {
-  uid: string;
-  status: string;
-  code?: string; // Generated contract code when status is 'generated'
+export type Phase =
+  | 'pending'
+  | 'enriching'
+  | 'generating'
+  | 'building'
+  | 'build_fixing'
+  | 'auditing_static'
+  | 'auditing_llm'
+  | 'audit_fixing'
+  | 'deploying'
+  | 'learning'
+  | 'done'
+  | 'failed';
+
+export const TERMINAL_PHASES: Phase[] = ['done', 'failed'];
+
+export interface ContractStatus {
+  bumm_uid: string;
+  phase: Phase;
+  build_attempt: number;
+  build_ok: boolean;
+  audit_attempt: number;
+  audit_ok: boolean;
+  program_id: string | null;
+  error: string | null;
 }
 
-export interface CreateWalletRequest {
-  wallet: string;
+export interface ContractCode {
+  code: string;
+  version: number;
 }
 
-export interface CreateWalletResponse {
-  uid: string;
+export interface ContractAudit {
+  report: string;
+  vulns: Record<string, unknown>;
 }
+
+// ── Credits ───────────────────────────────────────────────────────────────────
+
+export interface BalanceResponse {
+  user_uid: string;
+  credits: number;
+}
+
+export interface PurchaseRequest {
+  sol_tx_signature: string; // 64-128 chars base58
+}
+
+export interface PurchaseResponse {
+  credits_added: number;
+  new_balance: number;
+  sol_tx_signature: string;
+}
+
+// ── Errors ────────────────────────────────────────────────────────────────────
 
 export interface ApiError {
-  detail: Array<{
-    loc: (string | number)[];
-    msg: string;
-    type: string;
-  }>;
+  detail: string | Array<{ msg: string; type: string }>;
 }
 
-// Updated class for API work (compatibility with existing code)
-export class BummApiClient {
-  private baseUrl: string;
-  private userId: string | null = null;
+// ── JWT Payload (decoded client-side) ────────────────────────────────────────
 
-  constructor(baseUrl: string = API_BASE_URL) {
-    this.baseUrl = baseUrl;
-  }
-
-  // Set user ID
-  setUserId(userId: string) {
-    this.userId = userId;
-    // Also set in new API client
-    newApiClient.setUserId(userId);
-  }
-
-  // Delegate methods to new API client
-  async healthCheck(): Promise<Record<string, string>> {
-    return bummService.checkHealth();
-  }
-
-  async getBumms(request: BummListRequest = {}): Promise<BummListResponse> {
-    return bummService.getBummList(request);
-  }
-
-  async generateContract(request: BummGenerateRequest): Promise<BummGenerateResponse> {
-    return bummService.generateBumm(request.text);
-  }
-
-  async auditContract(request: BummGenerateRequest): Promise<BummGenerateResponse> {
-    return bummService.auditBumm(request.text);
-  }
-
-  async buildContract(request: BummGenerateRequest): Promise<BummGenerateResponse> {
-    return bummService.buildBumm(request.text);
-  }
-
-  async deployContract(request: BummGenerateRequest): Promise<string> {
-    return bummService.deployBumm(request.text);
-  }
-
-  async getGenerateStatus(bummUid: string): Promise<BummStatusResponse> {
-    return bummService.getGenerationStatus(bummUid);
-  }
-
-  async getAuditStatus(bummUid: string): Promise<BummStatusResponse> {
-    return bummService.getAuditStatus(bummUid);
-  }
-
-  async getBuildStatus(bummUid: string): Promise<BummStatusResponse> {
-    return bummService.getBuildStatus(bummUid);
-  }
-
-  async getDeployStatus(bummUid: string): Promise<string> {
-    return bummService.getDeployStatus(bummUid);
-  }
-
-  async createWallet(request: CreateWalletRequest): Promise<CreateWalletResponse> {
-    return userService.createWallet(request.wallet);
-  }
+export interface JwtPayload {
+  sub: string;    // user_uid
+  wallet: string; // wallet_address
+  exp: number;    // Unix timestamp
+  iat: number;
+  jti: string;
+  type: 'access' | 'refresh';
 }
-
-// Create API client instance
-export const apiClient = new BummApiClient();
-
-// Export utilities from configuration
-export { TASK_STATUS as TaskStatus, isTaskCompleted, isTaskError, getStatusDisplayName, getProgressFromStatus };

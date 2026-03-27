@@ -1,166 +1,94 @@
-# CLAUDE.md — Project Context for Claude AI
+# CLAUDE.md — Bumm AI Frontend v3 (thin client)
 
-## Bumm Frontend **v3** (primary repo for new work)
-
-- **This codebase** is **Bumm AI Frontend v3** — a **thin API client** for the new backend.
-- **Backend (new stack):** [bumm-ai/backend_v3](https://github.com/bumm-ai/backend_v3) — FastAPI + LangGraph pipeline (Hybrid Architecture v3.1). Do **not** assume legacy `bumm-api-2.0` behavior for new features.
-- **Spec:** `docs/TECHNICAL_SPEC_V3_1.md`, thin-client notes: `docs/V3_THIN_CLIENT.md`.
-- **Planned API paths (reference only):** `src/config/api.v3.planned.ts`.
-- **Proxy:** `src/app/api/backend/[...path]/route.ts` uses `BACKEND_URL` from env (default `http://127.0.0.1:8080`). Set in `.env.local` for local `backend_v3`.
-
-The sections below still describe the **current** UI structure (inherited from v2); migrating to WebSocket pipeline + `/api/v1/contracts/` is **in progress** per v3.1 spec.
-
----
-
-This file provides context for Claude AI when working with this codebase. It describes the architecture, conventions, and key patterns used in the project.
+> Single source of truth for Claude Code Desktop + Claude Projects.
+> Keep under 100 lines. Deep specs → `/docs/`.
 
 ## Project Overview
 
-**Bumm Frontend** is a Next.js 15 (App Router) dApp for AI-powered Solana smart contract generation. Users connect their Solana wallet, describe a smart contract in natural language, and the platform generates, audits, builds, and deploys it.
+**Bumm AI Frontend v3** — thin API client for the Bumm AI platform.
+The frontend does NOT implement LangGraph, KB, or pipeline — only UI, wallet, API calls, WebSocket status streaming.
 
-## Technology Stack
+- **This repo:** `frontend_v3` — Next.js 15 App Router, React 19
+- **Backend:** `backend_v3` — FastAPI + LangGraph (separate repo, port 8080)
+- **Spec:** `docs/TECHNICAL_SPEC_V3_1.md`, `docs/V3_THIN_CLIENT.md`
 
-- **Next.js 15.5** with App Router (NOT Pages Router)
-- **React 19** with hooks
+## Tech Stack
+
+- **Next.js 15.5** (App Router, NOT Pages Router)
+- **React 19** with hooks (functional components only)
 - **TypeScript** strict mode
-- **Tailwind CSS 4** for styling
+- **Tailwind CSS 4** (utility-first, no custom CSS unless necessary)
 - **Framer Motion** + **GSAP** for animations
-- **Solana Wallet Adapter** for blockchain connectivity
-- **Solana Web3.js** for blockchain interactions
+- **Solana Wallet Adapter** + **Web3.js**
 
-## Architecture & Data Flow
+## Architecture
 
-### API Layer (3-tier)
 ```
-Component → useBummApi hook → bummService → ApiClient (services/api.ts) → Next.js proxy → Backend
+Component → useBummApi hook → bummService → ApiClient → Next.js proxy → Backend
 ```
 
-1. **`src/config/api.ts`** — All API endpoints, status constants, and helper functions
-2. **`src/services/api.ts`** — Low-level HTTP client (`ApiClient` class) with retries, timeouts, x-user-id header
-3. **`src/services/bummService.ts`** — Business logic wrapper around ApiClient
-4. **`src/lib/api.ts`** — `BummApiClient` facade that delegates to bummService (for backward compatibility)
-5. **`src/hooks/useBummApi.ts`** — React hook that components use. Handles state, mock fallback, and status polling
+- Proxy: `src/app/api/backend/[...path]/route.ts` → `BACKEND_URL`
+- Mock fallback: `src/lib/mockApi.ts` (auto on network/500 errors)
+- Auth: wallet connect → `POST /api/v1/user/wallet/` → `x-user-id` header
+- Status: polling (current) → WebSocket (v3.1 target)
 
-### API Proxy (CORS bypass)
-Frontend calls `/api/backend/*` which are Next.js API routes that proxy to the FastAPI backend. This avoids CORS issues since browser only talks to localhost:3000.
+## Coding Standards
 
-- **Proxy route**: `src/app/api/backend/[...path]/route.ts`
-- **Backend URL**: `BACKEND_URL` environment variable (see `.env.example`; default `http://127.0.0.1:8080` in `route.ts`)
-- **Health check**: `src/app/api/backend/health/route.ts`
+- Functional components only, no class components
+- Custom hooks for all business logic (`use` prefix)
+- No `any` types — strict TypeScript
+- No god components (max 150 lines, extract sub-components)
+- Naming: PascalCase components, camelCase functions/variables
+- Imports: absolute paths via `@/` alias
+- No direct backend calls from components — always through service layer
+- localStorage keys prefixed with `bumm_`
 
-### Mock API Fallback
-When the real backend is unavailable, the system falls back to `src/lib/mockApi.ts`. The fallback is triggered by critical errors (network, CORS, timeout, 500) in `useBummApi.ts`.
+## File Structure Rules
 
-### Authentication
-1. User connects Solana wallet → `POST /api/v1/user/wallet/` with `{ wallet: "<pubkey>" }`
-2. Backend returns `{ uid: "<uuid>" }`
-3. UUID is saved to `localStorage` and sent as `x-user-id` header on all subsequent requests
-4. `ApiClient` manages the header via `setUserId()`
+- `src/app/` — pages and API routes (App Router)
+- `src/components/` — reusable UI components
+- `src/hooks/` — custom React hooks
+- `src/services/` — API client, business logic
+- `src/config/` — constants, endpoints
+- `src/lib/` — utilities, helpers
+- `src/types/` — TypeScript types/interfaces
 
-### Status Polling
-Long-running operations (generate, audit, build, deploy) use polling:
-1. `POST /api/v1/bumm/generate/` returns `{ uid: "<bumm-uid>", status: "new" }`
-2. Frontend polls `GET /api/v1/bumm/status/generate/<bumm-uid>/` every 5 seconds
-3. Status progresses: `new` → `initializing` → `generating` → `generated` (or `error`)
-4. **Important**: The `bumm-uid` from the backend response must be used for polling, NOT the local project UID. Projects store this in the `bummUid` field.
+## Testing Strategy
 
-## Key Files to Understand
+- Jest + React Testing Library
+- Test hooks with `renderHook`
+- Mock API responses, never hit real backend in tests
+- Coverage target: >70%
+- Run: `npm test`, `npm run test:coverage`
 
-| File | What it does | When to modify |
-|------|-------------|----------------|
-| `src/hooks/useBummApi.ts` | Main API integration hook with mock fallback | Adding new API operations or changing flow |
-| `src/components/dashboard/Dashboard.tsx` | Main orchestrator — handles all user actions | Adding new features or changing user flows |
-| `src/components/dashboard/ChatScreen.tsx` | AI chat UI + code editor + modals | Changing chat UX or adding new modals |
-| `src/config/api.ts` | API config, endpoints, status constants | Adding new endpoints or changing status values |
-| `src/services/api.ts` | HTTP client with retries | Changing HTTP behavior |
-| `src/services/bummService.ts` | Business logic wrapping API calls | Adding new backend operations |
-| `src/types/dashboard.ts` | All TypeScript interfaces | Adding new data fields |
-| `src/app/api/backend/[...path]/route.ts` | API proxy to backend | Changing backend URL |
+## Workflow (strict order)
 
-## Code Conventions
+1. **Plan** → discuss in Claude Code, reference spec
+2. **Tests** → write component/hook tests first
+3. **Implement** → Cursor for UI/styling speed
+4. **Review** → Claude Code checks architecture compliance
+5. **Docs** → update this file + relevant docs
+6. **Integrate** → PR, lint passes, merge
 
-### Component Structure
-- All page components are in `src/app/` (Next.js App Router)
-- Dashboard is a single-page app: `page.tsx` → `Dashboard.tsx` → `ChatScreen.tsx`
-- UI components are in `src/components/ui/`
-- State is managed via React hooks (no Redux/Zustand)
+## Commands
 
-### Naming
-- Hooks: `use*.ts` in `src/hooks/`
-- Services: `*Service.ts` in `src/services/`
-- Types: defined in `src/types/dashboard.ts`
-- Components: PascalCase `.tsx` files
+```bash
+npm run dev          # Start dev server (port 3000)
+npm run build        # Production build
+npm run lint         # ESLint
+npm test             # Jest
+npm run test:coverage
+```
 
-### State Management
-- `useBummApi` hook manages: user, projects, loading, errors, API calls
-- `useCredits` hook manages: credit balance, spending, pricing
-- Projects are stored in React state and localStorage
-- No global state library — everything flows through hooks
+## Key Migration Notes (v2 → v3.1)
 
-### Styling
-- Tailwind CSS utility classes (no CSS modules)
-- Color scheme: dark theme with `bg-[#101010]` as base
-- Animations: Framer Motion for page transitions, GSAP for complex sequences
-- Responsive: Mobile-first approach
+- Replace polling with WebSocket (`/ws/contracts/{uid}`)
+- Use `bummUid` only (no fallback to contractCode)
+- Credits refresh after pipeline completion
+- Chat history from backend, not localStorage
 
-## Backend API (FastAPI)
+## Hooks (pre-commit)
 
-**Production / legacy reference:** [bumm-ai/bumm-api-2.0](https://github.com/bumm-ai/bumm-api-2.0).  
-**v3 target:** [bumm-ai/backend_v3](https://github.com/bumm-ai/backend_v3) — new endpoints per `docs/TECHNICAL_SPEC_V3_1.md`.
-
-### Endpoints the frontend uses:
-- `POST /api/v1/user/wallet/` — Create/get user by wallet
-- `GET /api/v1/bumm/list/` — List user projects (requires `x-user-id`)
-- `POST /api/v1/bumm/generate/` — Start contract generation
-- `GET /api/v1/bumm/status/generate/{uid}/` — Poll generation status
-- `POST /api/v1/bumm/audit/` — Start security audit
-- `GET /api/v1/bumm/audit/status/{uid}/` — Poll audit status
-- `POST /api/v1/bumm/build/` — Start contract build
-- `GET /api/v1/bumm/build/status/{uid}/` — Poll build status
-- `POST /api/v1/bumm/deploy/` — Start deployment
-- `GET /api/v1/bumm/deploy/status/{uid}/` — Poll deploy status
-
-### Status Values (from backend):
-- **Generate**: `new`, `initializing`, `initialized`, `generating`, `generated`, `testing`, `tested`, `deploying`, `deployed`, `error`
-- **Audit**: `new`, `auditing`, `audited`, `error`
-- **Build**: `new`, `building`, `built`, `error`
-- **Deploy**: `new`, `deploying`, `deployed`, `error`
-
-## Common Tasks
-
-### Adding a new API endpoint
-1. Add endpoint path to `src/config/api.ts` → `API_ENDPOINTS`
-2. Add HTTP method to `API_METHODS`
-3. Add method to `src/services/api.ts` → `ApiClient`
-4. Add wrapper to `src/services/bummService.ts`
-5. Add facade method to `src/lib/api.ts` if needed
-6. Use in `useBummApi` hook or create a new hook
-
-### Adding a new UI modal
-1. Create component in `src/components/ui/YourModal.tsx`
-2. Add state to `ChatScreen.tsx` for visibility toggle
-3. Wire trigger from SmartActionButton or other component
-4. Add corresponding API call if needed
-
-### Changing the backend URL
-Set `BACKEND_URL` in `.env.local` (see `.env.example`). Defaults are defined in `src/app/api/backend/[...path]/route.ts` if unset.
-
-### Adding a new status to track
-1. Update `TASK_STATUS` in `src/config/api.ts`
-2. Update `isTaskCompleted()` and `isTaskError()` if needed
-3. Update `getStatusDisplayName()` and `getProgressFromStatus()`
-4. Update `trackTaskStatus` in `useBummApi.ts` if new task type
-
-## Known Patterns & Gotchas
-
-1. **bummUid vs project.uid**: When a user creates a project locally, it gets a local UID like `project_123456`. When calling the backend (generate/build/audit), the backend returns its own `bummUid`. The `bummUid` must be used for status polling, not the local project UID. Projects store this in the `bummUid` field.
-
-2. **Mock API fallback**: If the backend returns a critical error (network, CORS, 500), `useBummApi` automatically falls back to `mockApi.ts`. This is logged with `🔄 Falling back to Mock API`.
-
-3. **localStorage usage**: User UID, wallet address, current project, chat history, and contract code are all persisted in localStorage. Keys are prefixed with `bumm_`.
-
-4. **API calls go through proxy**: Never call the backend directly from the browser. Always use the Next.js API proxy at `/api/backend/*` to avoid CORS.
-
-5. **Credit system**: Currently credits are tracked client-side only. The backend credit endpoints exist but are not fully wired up on the frontend yet.
-
-6. **Wallet connection flow**: `WalletProvider.tsx` sets up the Solana wallet adapter. When wallet connects, `useBummApi`'s `useEffect` fires → calls `initializeUser()` → `POST /api/v1/user/wallet/`.
+- `npm run lint`
+- `npm run build` (type check)
+- `npm test -- --watchAll=false`

@@ -1,0 +1,49 @@
+# Bumm AI Frontend v3 — Cursor Rules
+# Synced with CLAUDE.md. Cursor reads this automatically.
+
+## Project Context
+- Bumm AI frontend: Next.js 15 thin client for Solana smart contract platform
+- React 19, TypeScript strict, Tailwind CSS 4
+- Spec: docs/TECHNICAL_SPEC_V3_1.md, docs/V3_THIN_CLIENT.md
+
+## STRICT Rules
+- Functional components ONLY (no class components)
+- No `any` types — use proper TypeScript interfaces
+- No god components (max 150 lines per component)
+- Custom hooks for business logic (useXxx pattern)
+- All API calls through service layer, never from components
+- Absolute imports via @/ alias
+- localStorage keys prefixed with `bumm_`
+- No direct backend URLs — use proxy `/api/backend/*`
+
+## Architecture
+- src/app/ → App Router pages + API route handlers
+- src/components/ → reusable UI (PascalCase files)
+- src/hooks/ → custom hooks (useBummApi, etc.)
+- src/services/ → API client, business logic
+- src/config/ → constants, endpoint definitions
+- src/lib/ → utilities
+- src/types/ → TypeScript types
+
+## Data Flow (always follow this)
+Component → useBummApi hook → bummService → ApiClient → Next.js proxy → Backend
+
+## Styling
+- Tailwind CSS 4 utility classes first
+- Framer Motion for animations
+- GSAP for complex scroll/timeline animations
+- Dark theme by default (match existing design)
+- Responsive: mobile-first approach
+
+## When Implementing
+1. Check existing components for patterns
+2. Use useBummApi hook for any backend interaction
+3. Handle loading/error states in every component
+4. Support mock API fallback gracefully
+5. Follow existing naming conventions in src/config/api.ts
+
+## Key Files
+- src/hooks/useBummApi.ts — main data hook
+- src/services/bummService.ts — API business logic
+- src/config/api.ts — endpoint definitions
+- src/app/api/backend/[...path]/route.ts — proxy

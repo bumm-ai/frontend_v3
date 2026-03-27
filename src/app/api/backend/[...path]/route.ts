@@ -68,11 +68,17 @@ async function handleRequest(
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
     };
-    
-    // Copy x-user-id header if it exists
+
+    // Forward Authorization header (JWT Bearer)
+    const authorization = request.headers.get('Authorization');
+    if (authorization) {
+      (headers as Record<string, string>)['Authorization'] = authorization;
+    }
+
+    // Forward legacy x-user-id header (backward compat)
     const userId = request.headers.get('x-user-id');
     if (userId) {
-      headers['x-user-id'] = userId;
+      (headers as Record<string, string>)['x-user-id'] = userId;
     }
     
     // Get request body
