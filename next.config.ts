@@ -9,15 +9,6 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
-  // Прокси для API запросов
-  async rewrites() {
-    return [
-      {
-        source: '/api/backend/:path*',
-        destination: '/api/backend/:path*',
-      },
-    ];
-  },
   // Разрешаем доступ с любых хостов
   async headers() {
     return [

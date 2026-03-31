@@ -5,6 +5,9 @@ import { Code, Edit3 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { CodeSource } from '@/types/dashboard';
 import { CodeGenerationStages } from './CodeGenerationStages';
+import { BuildStages } from './BuildStages';
+import { AuditStages } from './AuditStages';
+import { DeployStages } from './DeployStages';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-rust';
 
@@ -13,6 +16,9 @@ interface InteractiveCodeEditorProps {
   onCodeChange: (code: string, source: CodeSource) => void;
   placeholder?: string;
   isGenerating?: boolean;
+  isBuilding?: boolean;
+  isAuditing?: boolean;
+  isDeploying?: boolean;
   onGenerationComplete?: () => void;
   onAddAIMessage?: (message: string) => void;
   context?: string; // Context for determining contract type
@@ -21,11 +27,14 @@ interface InteractiveCodeEditorProps {
   useRealApi?: boolean; // When true, show simple loader (no demo templates)
 }
 
-export const InteractiveCodeEditor = ({ 
-  initialCode = '', 
-  onCodeChange, 
+export const InteractiveCodeEditor = ({
+  initialCode = '',
+  onCodeChange,
   placeholder = "Paste your smart contract here or wait for AI to generate one...",
   isGenerating = false,
+  isBuilding = false,
+  isAuditing = false,
+  isDeploying = false,
   onGenerationComplete,
   onAddAIMessage,
   context,
@@ -101,12 +110,42 @@ export const InteractiveCodeEditor = ({
 
   if (isGenerating) {
     return (
-      <CodeGenerationStages 
+      <CodeGenerationStages
         isGenerating={isGenerating}
         onComplete={handleGenerationComplete}
         onAddAIMessage={onAddAIMessage}
         context={context || ''}
         waitForExternalCode={useRealApi}
+      />
+    );
+  }
+
+  if (isBuilding) {
+    return (
+      <BuildStages
+        isBuilding={isBuilding}
+        onComplete={() => {}}
+        onAddAIMessage={onAddAIMessage}
+      />
+    );
+  }
+
+  if (isAuditing) {
+    return (
+      <AuditStages
+        isAuditing={isAuditing}
+        onComplete={() => {}}
+        onAddAIMessage={onAddAIMessage}
+      />
+    );
+  }
+
+  if (isDeploying) {
+    return (
+      <DeployStages
+        isDeploying={isDeploying}
+        onComplete={() => {}}
+        onAddAIMessage={onAddAIMessage}
       />
     );
   }

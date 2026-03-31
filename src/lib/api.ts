@@ -86,6 +86,23 @@ export interface PurchaseResponse {
   sol_tx_signature: string;
 }
 
+// ── Chat ─────────────────────────────────────────────────────────────────────
+
+export interface ChatMessagePayload {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface ChatRequest {
+  messages: ChatMessagePayload[];
+}
+
+export interface ChatResponse {
+  message: string;           // AI reply to display
+  ready: boolean;            // true → enriched_prompt is available
+  enriched_prompt?: string;  // detailed spec for pipeline generation
+}
+
 // ── Errors ────────────────────────────────────────────────────────────────────
 
 export interface ApiError {

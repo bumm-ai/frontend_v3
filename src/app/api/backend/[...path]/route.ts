@@ -60,8 +60,8 @@ async function handleRequest(
 ) {
   try {
     const path = pathSegments.join('/');
-    const url = `${BACKEND_URL}/${path}${path.endsWith('/') ? '' : '/'}`;
-    
+    const url = `${BACKEND_URL}/${path}`;
+
     console.log(`🔄 Proxying ${method} request to: ${url}`);
     
     // Get headers from original request

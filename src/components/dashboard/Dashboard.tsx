@@ -1,15 +1,16 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { DashboardState, ChatMessage, Project } from '@/types/dashboard';
 import { useBummApi } from '@/hooks/useBummApi';
 import { useCredits } from '@/hooks/useCredits';
+import { useAuth } from '@/hooks/useAuth';
 import { useAnalytics } from '@/hooks/useAnalytics';
-import { bummService, userService } from '@/services/bummService';
-import { isGenerationCommand, extractContractDescription } from '@/utils/generationCommands';
-import { useRef } from 'react';
+import { useContract } from '@/hooks/useContract';
+import { apiClient } from '@/services/api';
+import type { ChatMessagePayload } from '@/lib/api';
 // import { WalletDebug } from '../debug/WalletDebug';
 // import { SimpleWalletTest } from '../debug/SimpleWalletTest';
 import LoginScreen from './LoginScreen';
@@ -19,6 +20,7 @@ export default function Dashboard() {
   const { disconnect } = useWallet();
   const { hasEnoughCredits, loadBalance } = useCredits();
   const analytics = useAnalytics();
+  const auth = useAuth();
   const [currentState, setCurrentState] = useState<DashboardState>('login');
   
   // Counter for generating unique message IDs
@@ -43,7 +45,12 @@ export default function Dashboard() {
     return null;
   });
   
-  // API хук
+  // ── New v3 contract hook ────────────────────────────────────────────────────
+  const [activeContractUid, setActiveContractUid] = useState<string | null>(null);
+  const [pipelineMsgId, setPipelineMsgId] = useState<string | null>(null);
+  const contract = useContract(activeContractUid);
+
+  // API хук (compat stubs for project management UI)
   const {
     user,
     projects,
@@ -58,7 +65,6 @@ export default function Dashboard() {
     loadProjects,
     createProject,
     updateProjects,
-    sendChatMessage,
     loadChatHistory,
   } = useBummApi();
   
@@ -158,181 +164,246 @@ export default function Dashboard() {
     }
   }, [currentProject]);
 
+  // Auto-switch to chat when JWT session is restored or login completes
+  useEffect(() => {
+    if (auth.isAuthenticated && currentState === 'login') {
+      setCurrentState('chat');
+      loadBalance().catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.isAuthenticated]);
+
   const handleLogin = async () => {
-    console.log(`Login initiated`);
-    analytics.trackWalletConnect('phantom'); // Assume Phantom as primary wallet
-    setCurrentState('chat'); // Switch to dashboard
+    analytics.trackWalletConnect('phantom');
+    await auth.login();
+    // State transition handled by the useEffect above when auth.isAuthenticated becomes true
   };
 
-  const handleSendMessage = async (content: string, currentContractCode?: string) => {
-    // Check credits before triggering generation via chat
+  // ── Track current pipeline phase for preview panel animations ────────────
+  const [pipelinePhase, setPipelinePhase] = useState<string | null>(null);
+
+  // ── Helper: save project to localStorage keyed by wallet ─────────────────
+  const saveProject = useCallback((project: Project) => {
+    if (typeof window === 'undefined') return;
+    const wallet = auth.walletAddress;
+    if (!wallet) return;
+    const key = `bumm_projects_${wallet}`;
+    try {
+      const existing: Project[] = JSON.parse(localStorage.getItem(key) || '[]');
+      const updated = [project, ...existing.filter(p => p.uid !== project.uid)];
+      localStorage.setItem(key, JSON.stringify(updated));
+    } catch (_) {}
+  }, [auth.walletAddress]);
+
+  // ── Load projects from localStorage when wallet connects ─────────────────
+  useEffect(() => {
+    if (!auth.isAuthenticated || !auth.walletAddress) return;
+    const key = `bumm_projects_${auth.walletAddress}`;
+    try {
+      const saved: Project[] = JSON.parse(localStorage.getItem(key) || '[]');
+      if (saved.length > 0) {
+        // useBummApi projects are managed separately — sync wallet projects into it
+        saved.forEach(p => {
+          updateProjects(prev =>
+            prev.some(x => x.uid === p.uid) ? prev : [p, ...prev]
+          );
+        });
+      }
+    } catch (_) {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.isAuthenticated, auth.walletAddress]);
+
+  // ── WebSocket phase watcher ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!contract.status) return;
+    const { phase, error } = contract.status;
+
+    // Always update animation phase
+    setPipelinePhase(phase);
+
+    if (!pipelineMsgId) return;
+
+    const labels: Record<string, string> = {
+      pending:          '⏳ Queued — waiting for worker...',
+      enriching:        '🔍 Analyzing your request...',
+      generating:       '⚡ Generating Solana smart contract...',
+      building:         '🔧 Building with Anchor framework...',
+      build_fixing:     '🔧 Fixing build errors...',
+      auditing_static:  '🔒 Running static security audit...',
+      auditing_llm:     '🔒 Running AI security review...',
+      audit_fixing:     '🔒 Fixing security issues...',
+      deploying:        '🚀 Deploying to devnet...',
+      learning:         '🧠 Updating knowledge base...',
+      done:             '✅ Contract generated! Review the code on the right.',
+      failed:           `❌ Pipeline failed: ${error ?? 'Unknown error'}`,
+    };
+
+    setMessages(prev =>
+      prev.map(m =>
+        m.id === pipelineMsgId
+          ? { ...m, content: labels[phase] ?? `⚙️ ${phase}...` }
+          : m
+      )
+    );
+
+    if (phase === 'done') {
+      contract.getCode().then(result => {
+        const uid = activeContractUid!;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem(`bumm_contract_code_${uid}`, result.code); } catch (_) {}
+        }
+        setGeneratedCode({ projectUid: uid, code: result.code });
+
+        // ── Create project only on successful generation ──────────────────
+        const chatSnapshot = messages.filter(m =>
+          !m.content.startsWith('⏳') && !m.content.startsWith('⚙️') &&
+          !m.content.startsWith('🔍') && !m.content.startsWith('⚡') &&
+          !m.content.startsWith('🔧') && !m.content.startsWith('🔒') &&
+          !m.content.startsWith('🚀') && !m.content.startsWith('🧠')
+        );
+        const firstUserMsg = chatSnapshot.find(m => m.isUser);
+        const projectName = firstUserMsg
+          ? firstUserMsg.content.slice(0, 40) + (firstUserMsg.content.length > 40 ? '...' : '')
+          : `Contract ${uid.slice(0, 8)}`;
+
+        const newProject: Project = {
+          uid,
+          name: projectName,
+          status: 'generated',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          task: 'generate',
+          bummUid: uid,
+          code: result.code,
+        };
+        setCurrentProject(newProject);
+        updateProjects(prev => [newProject, ...prev.filter(p => p.uid !== uid)]);
+        saveProject(newProject);
+        // Save chat history for this project
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem(`bumm_chat_history_${uid}`, JSON.stringify(chatSnapshot));
+          } catch (_) {}
+        }
+
+        loadBalance().catch(() => {});
+        setPipelinePhase(null);
+      }).catch(() => {});
+      setPipelineMsgId(null);
+      setActiveContractUid(null);
+    } else if (phase === 'failed') {
+      setGenerationAttemptFailed(prev => prev + 1);
+      setPipelineMsgId(null);
+      setActiveContractUid(null);
+      setPipelinePhase(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contract.status]);
+
+  // ── Helper: launch the pipeline with an enriched prompt ──────────────────
+  const launchPipeline = useCallback(async (enrichedPrompt: string) => {
     if (!hasEnoughCredits('generate')) {
-      const insufficientCreditsMessage: ChatMessage = {
+      setMessages(prev => [...prev, {
         id: generateUniqueMessageId(),
-        content: 'Insufficient credits for contract generation. Please top up your credits to continue.',
+        content: 'Insufficient credits for contract generation. Please top up to continue.',
         timestamp: new Date(),
         isUser: false,
-      };
-      setMessages(prev => [...prev, insufficientCreditsMessage]);
+      }]);
       return;
     }
-    // 1. Add user message to chat
-    const userMessage: ChatMessage = {
+
+    const statusMsgId = generateUniqueMessageId();
+    setPipelineMsgId(statusMsgId);
+    setMessages(prev => [...prev, {
+      id: statusMsgId,
+      content: '⏳ Starting pipeline...',
+      timestamp: new Date(),
+      isUser: false,
+    }]);
+
+    try {
+      const created = await contract.createContract(enrichedPrompt);
+      setActiveContractUid(created.uid);
+    } catch (err) {
+      console.error('launchPipeline error:', err);
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === statusMsgId
+            ? { ...m, content: `❌ Failed to start: ${err instanceof Error ? err.message : 'Unknown error'}` }
+            : m
+        )
+      );
+      setPipelineMsgId(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasEnoughCredits, contract]);
+
+  // ── Main send handler: chat-first → pipeline when ready ─────────────────
+  const handleSendMessage = async (content: string, currentContractCode?: string) => {
+    // 1. Add user message to chat UI
+    setMessages(prev => [...prev, {
       id: generateUniqueMessageId(),
       content,
       timestamp: new Date(),
       isUser: true,
-    };
-    setMessages(prev => [...prev, userMessage]);
+    }]);
 
+    // 2. Build conversation history for the chat API
+    //    Include current editor code as context if relevant
+    let userContent = content;
+    if (currentContractCode && currentContractCode.trim().length > 50) {
+      const codeWords = ['this code', 'my code', 'the code', 'this contract', 'improve', 'fix', 'review', 'audit', 'build'];
+      if (codeWords.some(w => content.toLowerCase().includes(w))) {
+        userContent = `${content}\n\nCurrent contract code:\n\`\`\`rust\n${currentContractCode}\n\`\`\``;
+      }
+    }
+
+    // Convert chat messages to API format (skip system / status messages)
+    const history: ChatMessagePayload[] = messages
+      .filter(m => m.content && !m.content.startsWith('⏳') && !m.content.startsWith('⚡') && !m.content.startsWith('🔧') && !m.content.startsWith('🔍') && !m.content.startsWith('🔒') && !m.content.startsWith('🚀') && !m.content.startsWith('❌') && !m.content.startsWith('✅'))
+      .map(m => ({
+        role: (m.isUser ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: m.content,
+      }));
+
+    // Add current message
+    history.push({ role: 'user', content: userContent });
+
+    // 3. Show typing indicator
+    const typingId = generateUniqueMessageId();
+    setMessages(prev => [...prev, {
+      id: typingId,
+      content: '...',
+      timestamp: new Date(),
+      isUser: false,
+    }]);
+
+    // 4. Call chat API
     try {
-      // 2. If user pasted code in the editor, include it in the message
-      let messageToSend = content;
-      if (currentContractCode && currentContractCode.trim().length > 50) {
-        // Check if user is referring to the code in the editor
-        const codeRelatedWords = [
-          'this code',
-          'my code',
-          'the code',
-          'this contract',
-          'improve',
-          'fix',
-          'review',
-          'audit',
-          'build',
-        ];
-        const isReferringToCode = codeRelatedWords.some(w =>
-          content.toLowerCase().includes(w)
-        );
+      const chatResp = await apiClient.chatMessage(history);
 
-        if (isReferringToCode) {
-          messageToSend = `${content}\n\nHere is the current contract code:\n\`\`\`rust\n${currentContractCode}\n\`\`\``;
-        }
-      }
+      // Replace typing indicator with actual AI response
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === typingId
+            ? { ...m, content: chatResp.message }
+            : m
+        )
+      );
 
-      // 3. Send to AI chat backend
-      const bummUid = currentProject?.bummUid || null;
-      const response = await sendChatMessage(messageToSend, bummUid);
-
-      // 4. Add AI response to chat
-      const aiMessage: ChatMessage = {
-        id: generateUniqueMessageId(),
-        content: response.reply,
-        timestamp: new Date(),
-        isUser: false,
-      };
-      setMessages(prev => [...prev, aiMessage]);
-
-      // 5. If AI triggered generation → track it; otherwise clear loading
-      if (response.action !== 'generate') {
-        setGenerationAttemptFailed(prev => prev + 1);
-      }
-      if (response.action === 'generate' && response.bumm_uid) {
-        console.log(`🚀 AI triggered generation: bumm_uid=${response.bumm_uid}`);
-
-        // Create or update project
-        let project = currentProject;
-        if (!project) {
-          project = await createProject('New Contract');
-        }
-
-        const updatedProject: Project = {
-          ...project,
-          bummUid: response.bumm_uid,
-          status: 'in-progress',
-        };
-        // Обновляем текущий проект и список проектов, чтобы везде был корректный bummUid
-        setCurrentProject(updatedProject);
-        updateProjects(prev =>
-          prev.some(p => p.uid === updatedProject.uid)
-            ? prev.map(p => (p.uid === updatedProject.uid ? updatedProject : p))
-            : [updatedProject, ...prev]
-        );
-
-        // Add generation started message (will be updated with real status)
-        const statusMessageId = generateUniqueMessageId();
-        const genMessage: ChatMessage = {
-          id: statusMessageId,
-          content: '⚡ Initializing...',
-          timestamp: new Date(),
-          isUser: false,
-        };
-        setMessages(prev => [...prev, genMessage]);
-
-        // Start tracking generation status
-        trackTaskStatus(
-          updatedProject.uid,
-          'generate',
-          progress => {
-            setMessages(prev =>
-              prev.map(m =>
-                m.id === statusMessageId
-                  ? { ...m, content: `⚡ ${progress.message}` }
-                  : m
-              )
-            );
-          },
-          result => {
-            // Generation complete — extract real code from API
-            const statusResp = result as { uid?: string; status?: string; code?: string };
-            const code = statusResp?.code;
-            if (code && typeof code === 'string') {
-              if (typeof window !== 'undefined') {
-                try {
-                  localStorage.setItem(`bumm_contract_code_${updatedProject.uid}`, code);
-                } catch (e) {
-                  console.warn('Failed to save code to localStorage:', e);
-                }
-              }
-              setGeneratedCode({ projectUid: updatedProject.uid, code });
-            }
-
-            updateProjects(prev =>
-              prev.map(p =>
-                p.uid === updatedProject.uid
-                  ? {
-                      ...p,
-                      status: 'generated' as const,
-                      task: null,
-                      updated_at: new Date().toISOString(),
-                    }
-                  : p
-              )
-            );
-
-            const successMessage: ChatMessage = {
-              id: generateUniqueMessageId(),
-              content:
-                '✅ Smart contract generated successfully! You can review the code in the editor, then Build → Audit → Deploy.',
-              timestamp: new Date(),
-              isUser: false,
-            };
-            setMessages(prev => [...prev, successMessage]);
-            // Refresh credits after backend deduction
-            loadBalance();
-          },
-          error => {
-            setGenerationAttemptFailed(prev => prev + 1);
-            const errorMessage: ChatMessage = {
-              id: generateUniqueMessageId(),
-              content: `❌ Generation failed: ${error}. Please try again.`,
-              timestamp: new Date(),
-              isUser: false,
-            };
-            setMessages(prev => [...prev, errorMessage]);
-          },
-          response.bumm_uid
-        );
+      // 5. If AI says ready → launch the pipeline automatically
+      if (chatResp.ready && chatResp.enriched_prompt) {
+        await launchPipeline(chatResp.enriched_prompt);
       }
     } catch (err) {
-      console.error('handleSendMessage error:', err);
-      const errorMessage: ChatMessage = {
-        id: generateUniqueMessageId(),
-        content: 'Sorry, something went wrong. Please try again.',
-        timestamp: new Date(),
-        isUser: false,
-      };
-      setMessages(prev => [...prev, errorMessage]);
+      console.error('handleSendMessage chat error:', err);
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === typingId
+            ? { ...m, content: `❌ Chat error: ${err instanceof Error ? err.message : 'Unknown error'}` }
+            : m
+        )
+      );
     }
   };
 
@@ -370,7 +441,7 @@ export default function Dashboard() {
   };
 
   const handleBuild = async (code: string) => {
-    if (!user || !code.trim()) return;
+    if (!auth.isAuthenticated || !code.trim()) return;
     
     // Credit check temporarily disabled - frontend only
     // if (!hasEnoughCredits('build')) {
@@ -460,7 +531,7 @@ export default function Dashboard() {
   };
 
   const handleDeploy = async (code: string): Promise<string | undefined> => {
-    if (!user || !code.trim()) return undefined;
+    if (!auth.isAuthenticated || !code.trim()) return undefined;
     
     try {
       // Add message about deployment start
@@ -520,7 +591,7 @@ export default function Dashboard() {
   };
 
   const handleCreateNew = async () => {
-    if (!user) return;
+    if (!auth.isAuthenticated) return;
     
     try {
       console.log(`Creating new project manually...`);
@@ -748,7 +819,7 @@ export default function Dashboard() {
       
       case 'chat':
         return (
-          <ChatScreen 
+          <ChatScreen
             messages={messages}
             onSendMessage={handleSendMessage}
             onAddAIMessage={addAIMessage}
@@ -775,6 +846,7 @@ export default function Dashboard() {
             generatedCode={generatedCode}
             onGeneratedCodeApplied={() => setGeneratedCode(null)}
             generationAttemptFailed={generationAttemptFailed}
+            pipelinePhase={pipelinePhase}
           />
         );
       

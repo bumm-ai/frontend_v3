@@ -4,6 +4,8 @@ import { API_PROXY, ENDPOINTS } from '@/config/api';
 import type {
   AuthTokens,
   BalanceResponse,
+  ChatMessagePayload,
+  ChatResponse,
   ContractCreated,
   ContractRequest,
   ContractStatus,
@@ -102,6 +104,15 @@ export class ApiClient {
     return apiFetch<void>(ENDPOINTS.AUTH_LOGOUT, {
       method: 'POST',
       body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+  }
+
+  // ── Chat ──────────────────────────────────────────────────────────────────
+
+  async chatMessage(messages: ChatMessagePayload[]): Promise<ChatResponse> {
+    return apiFetch<ChatResponse>(ENDPOINTS.CHAT, {
+      method: 'POST',
+      body: JSON.stringify({ messages }),
     });
   }
 

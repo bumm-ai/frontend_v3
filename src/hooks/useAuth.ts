@@ -97,13 +97,13 @@ export function useAuth() {
 
     try {
       const walletAddress = publicKey.toBase58();
-      const { message } = await challenge(walletAddress);
+      const { nonce, message } = await challenge(walletAddress);
 
       const encoded = new TextEncoder().encode(message);
       const signatureBytes = await signMessage(encoded);
       const signature = bs58.encode(signatureBytes);
 
-      const tokens = await verify(walletAddress, signature, message.split('Nonce: ')[1] ?? '');
+      const tokens = await verify(walletAddress, signature, nonce);
       const payload = decodeJwt(tokens.access_token);
 
       setState({

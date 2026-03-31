@@ -477,9 +477,13 @@ export default function InteractiveDemo() {
     setMobileActiveTab('chat');
     // slight delay to allow initial render
     const t = setTimeout(() => {
-      startAutoDemo();
+      if (!autoDemoStopRef.current) startAutoDemo();
     }, 400);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      // Stop async demo chain (React Strict Mode unmount/remount otherwise runs two demos)
+      autoDemoStopRef.current = true;
+    };
   }, []);
 
   // Auto-scroll to bottom of messages - desktop version

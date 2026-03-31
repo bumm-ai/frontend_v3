@@ -1,9 +1,15 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { apiClient } from '@/services/api';
+import { apiClient, getAccessToken } from '@/services/api';
 import type { BalanceResponse, PurchaseResponse } from '@/lib/api';
+
+/** Stable references — new object literals each render break useEffect deps in HeaderCreditsButton etc. */
+const LEGACY_RATES = Object.freeze({ SOL: 100, USDC: 1.0, CREDIT: 0.01 });
+const LEGACY_PRICING = Object.freeze({
+  generate: 10, audit: 5, build: 5, deploy: 5, chat: 0, upgrade: 10,
+});
 
 export function useCredits() {
   const { connected } = useWallet();
@@ -45,20 +51,39 @@ export function useCredits() {
     }
   }, []);
 
-  // ── load on wallet connect (only if authenticated) ───────────────────────────
+  // ── load on wallet connect — only if JWT token exists ────────────────────────
   useEffect(() => {
-    if (connected) refetch().catch(() => {});
+    if (connected && getAccessToken()) refetch().catch(() => {});
   }, [connected, refetch]);
 
   // ── legacy compat: old components accessed balance.balance ────────────────
-  // `balance` is exported as a legacy CreditBalance-shaped object for old components.
-  // `credits` is the raw number for new components.
-  const balanceObj = {
-    balance:        balance ?? 0,
-    totalPurchased: 0,
-    totalSpent:     0,
-    updatedAt:      new Date().toISOString(),
-  };
+  const balanceObj = useMemo(
+    () => ({
+      balance:        balance ?? 0,
+      totalPurchased: 0,
+      totalSpent:     0,
+      updatedAt:      new Date().toISOString(),
+    }),
+    [balance],
+  );
+
+  const getOperationCost = useCallback((_op: string): number => {
+    void _op;
+    return 10;
+  }, []);
+  const hasEnoughCredits = useCallback(
+    (_op: string) => (balance ?? 0) > 0,
+    [balance],
+  );
+
+  const calculateCreditsForTokens = useCallback(
+    async (_amount: number, _type: string) => ({
+      creditsAmount: 0,
+      usdAmount:       0,
+      rates:           LEGACY_RATES,
+    }),
+    [],
+  );
 
   return {
     // v3 — use these in new code
@@ -76,14 +101,11 @@ export function useCredits() {
       _type: string,
       _wallet: unknown,
     ): Promise<void> => { throw new Error('Use purchase(solTxSignature) instead'); },
-    hasEnoughCredits: (_op: string) => (balance ?? 0) > 0,
-    // Legacy stubs — rates/pricing no longer exist in backend_v3
-    rates:    { SOL: 100, USDC: 1.0, CREDIT: 0.01 },
-    pricing:  { generate: 10, audit: 5, build: 5, deploy: 5, chat: 0, upgrade: 10 },
-    getOperationCost: (_op: string) => 10,
-    calculateCreditsForTokens: async (_amount: number, _type: string) => ({
-      creditsAmount: 0, usdAmount: 0, rates: { SOL: 100, USDC: 1.0, CREDIT: 0.01 },
-    }),
+    hasEnoughCredits,
+    rates:    LEGACY_RATES,
+    pricing:  LEGACY_PRICING,
+    getOperationCost,
+    calculateCreditsForTokens,
     loadRates:   async () => {},
     loadPricing: async () => {},
     spendCredits: async (_op: string) => true,

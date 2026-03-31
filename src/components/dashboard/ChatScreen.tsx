@@ -43,6 +43,7 @@ interface ChatScreenProps {
   generatedCode?: { projectUid: string; code: string } | null;
   onGeneratedCodeApplied?: () => void;
   generationAttemptFailed?: number;
+  pipelinePhase?: string | null;
 }
 
 export default function ChatScreen({ 
@@ -71,7 +72,8 @@ export default function ChatScreen({
   error,
   generatedCode,
   onGeneratedCodeApplied,
-  generationAttemptFailed = 0
+  generationAttemptFailed = 0,
+  pipelinePhase,
 }: ChatScreenProps) {
   const [inputValue, setInputValue] = useState('');
   const [mobileActiveTab, setMobileActiveTab] = useState<'chat' | 'code' | 'network'>('chat');
@@ -136,6 +138,12 @@ export default function ChatScreen({
   const [isBuildModalOpen, setIsBuildModalOpen] = useState(false);
   const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+
+  // Derive animation flags from the live pipeline phase coming from Dashboard
+  const isPipelineGenerating = pipelinePhase === 'generating' || pipelinePhase === 'enriching';
+  const isPipelineBuilding   = pipelinePhase === 'building' || pipelinePhase === 'build_fixing';
+  const isPipelineAuditing   = pipelinePhase === 'auditing_static' || pipelinePhase === 'auditing_llm' || pipelinePhase === 'audit_fixing';
+  const isPipelineDeploying  = pipelinePhase === 'deploying';
   const [isContractDeployed, setIsContractDeployed] = useState(() => {
     if (typeof window !== 'undefined' && currentProject) {
       try {
@@ -635,10 +643,13 @@ export default function ChatScreen({
         
             {/* Interactive Code Area - flex-1 to fill space */}
             <div className="flex-1 p-3 min-h-0">
-            <InteractiveCodeEditor 
+            <InteractiveCodeEditor
               initialCode={contractCode}
               onCodeChange={handleCodeChange}
-              isGenerating={isGenerating}
+              isGenerating={isGenerating || isPipelineGenerating}
+              isBuilding={isPipelineBuilding}
+              isAuditing={isPipelineAuditing}
+              isDeploying={isPipelineDeploying}
               onGenerationComplete={handleGenerationComplete}
               onAddAIMessage={onAddAIMessage}
               placeholder="Paste your smart contract here or chat with AI to generate one..."

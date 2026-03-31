@@ -1,6 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
-const BACKEND_URL = 'https://api.bumm.io';
+// Must match src/app/api/backend/[...path]/route.ts so local dev hits the same backend.
+const BACKEND_URL =
+  process.env.BACKEND_URL ||
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  'http://127.0.0.1:8080';
 
 export async function GET() {
   try {

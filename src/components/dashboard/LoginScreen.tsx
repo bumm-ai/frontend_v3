@@ -2,11 +2,10 @@
 
 import { motion } from 'framer-motion';
 import { useWallet } from '@solana/wallet-adapter-react';
-import { useEffect } from 'react';
 import { SimpleWalletButton } from '../ui/WalletButton';
 import { HeaderWalletButton } from '../ui/HeaderWalletButton';
 import { StartBuildingButton } from '../ui/StartBuildingButton';
-import { useBummApi } from '@/hooks/useBummApi';
+import { useAuth } from '@/hooks/useAuth';
 import Footer from '../ui/Footer';
 import InteractiveDemo from '../demo/InteractiveDemo';
 
@@ -16,14 +15,7 @@ interface LoginScreenProps {
 
 export default function LoginScreen({ onLogin }: LoginScreenProps) {
   const { connected } = useWallet();
-  const { user, initializeUser, isLoading, error } = useBummApi();
-
-  // Initialize user when wallet connects
-  useEffect(() => {
-    if (connected && !user && !isLoading) {
-      initializeUser();
-    }
-  }, [connected, user, isLoading, initializeUser]);
+  const { isAuthenticated, isLoading, error } = useAuth();
   return (
     <motion.div 
       className="flex flex-col w-full max-w-6xl min-h-[832px] mx-auto bg-[#101010] overflow-x-hidden"
@@ -95,7 +87,7 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
                 </p>
               )}
               
-              {connected && !user && isLoading && (
+              {connected && !isAuthenticated && isLoading && (
                 <p className="text-sm text-orange-500 text-center">
                   Initializing your account...
                 </p>
