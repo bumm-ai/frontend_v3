@@ -22,8 +22,17 @@ export const ENDPOINTS = {
   CONTRACT_STATUS:  (uid: string) => `/api/v1/contracts/${uid}/status`,
   CONTRACT_CODE:    (uid: string) => `/api/v1/contracts/${uid}/code`,
   CONTRACT_AUDIT:   (uid: string) => `/api/v1/contracts/${uid}/audit`,
+  CONTRACT_CHAT:         (uid: string) => `/api/v1/contracts/${uid}/chat`,
+  CONTRACT_UPDATE:       (uid: string) => `/api/v1/contracts/${uid}`,
+  CONTRACT_DELETE:       (uid: string) => `/api/v1/contracts/${uid}`,
+  // Step-mode endpoints — used by BuildModal / AuditModal / DeployModal
+  CONTRACT_BUILD:        (uid: string) => `/api/v1/build/${uid}`,
+  CONTRACT_AUDIT_STEP:   (uid: string) => `/api/v1/audit/${uid}`,
+  CONTRACT_DEPLOY_STEP:  (uid: string) => `/api/v1/deploy/${uid}`,
   CREDITS_BALANCE:  '/api/v1/credits/balance',
   CREDITS_PURCHASE: '/api/v1/credits/purchase',
+  CREDITS_HISTORY:  '/api/v1/credits/history',
+  CREDITS_RATES:    '/api/v1/credits/rates',
   WS_CONTRACT:      (uid: string) => `${WS_BASE}/ws/contracts/${uid}`,
 } as const;
 

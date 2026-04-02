@@ -11,6 +11,9 @@ import type {
   ContractStatus,
   ContractCode,
   ContractAudit,
+  ContractListResponse,
+  CreditHistoryResponse,
+  CreditRatesResponse,
   PurchaseResponse,
 } from '@/lib/api';
 
@@ -137,6 +140,46 @@ export class ApiClient {
     return apiFetch(ENDPOINTS.CONTRACT_AUDIT(uid));
   }
 
+  async listContracts(limit = 50, offset = 0): Promise<ContractListResponse> {
+    return apiFetch(`${ENDPOINTS.CONTRACTS}?limit=${limit}&offset=${offset}`);
+  }
+
+  async updateContract(uid: string, data: { name?: string }): Promise<{ uid: string; name: string }> {
+    return apiFetch(ENDPOINTS.CONTRACT_UPDATE(uid), {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteContract(uid: string): Promise<{ status: string; uid: string }> {
+    return apiFetch(ENDPOINTS.CONTRACT_DELETE(uid), { method: 'DELETE' });
+  }
+
+  async getContractChat(uid: string): Promise<{ messages: Array<Record<string, unknown>> }> {
+    return apiFetch(ENDPOINTS.CONTRACT_CHAT(uid));
+  }
+
+  // ── Step-mode triggers ────────────────────────────────────────────────────
+
+  async triggerBuild(uid: string): Promise<{ status: string; uid: string }> {
+    return apiFetch(ENDPOINTS.CONTRACT_BUILD(uid), { method: 'POST' });
+  }
+
+  async triggerAudit(uid: string): Promise<{ status: string; uid: string }> {
+    return apiFetch(ENDPOINTS.CONTRACT_AUDIT_STEP(uid), { method: 'POST' });
+  }
+
+  async triggerDeploy(uid: string): Promise<{ status: string; uid: string }> {
+    return apiFetch(ENDPOINTS.CONTRACT_DEPLOY_STEP(uid), { method: 'POST' });
+  }
+
+  async saveContractChat(uid: string, messages: Array<Record<string, unknown>>): Promise<{ status: string; message_count: number }> {
+    return apiFetch(ENDPOINTS.CONTRACT_CHAT(uid), {
+      method: 'PUT',
+      body: JSON.stringify({ messages }),
+    });
+  }
+
   // ── Credits ───────────────────────────────────────────────────────────────
 
   async getCreditsBalance(): Promise<BalanceResponse> {
@@ -148,6 +191,14 @@ export class ApiClient {
       method: 'POST',
       body: JSON.stringify({ sol_tx_signature: solTxSignature }),
     });
+  }
+
+  async getCreditHistory(limit = 50, offset = 0): Promise<CreditHistoryResponse> {
+    return apiFetch(`${ENDPOINTS.CREDITS_HISTORY}?limit=${limit}&offset=${offset}`);
+  }
+
+  async getCreditRates(): Promise<CreditRatesResponse> {
+    return apiFetch(ENDPOINTS.CREDITS_RATES);
   }
 }
 

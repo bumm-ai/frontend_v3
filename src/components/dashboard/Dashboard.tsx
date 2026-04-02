@@ -16,6 +16,20 @@ import type { ChatMessagePayload } from '@/lib/api';
 import LoginScreen from './LoginScreen';
 import ChatScreen from './ChatScreen';
 
+/** Map backend pipeline phase to frontend project status */
+function mapPhaseToStatus(phase: string): Project['status'] {
+  switch (phase) {
+    case 'pending': case 'started': case 'enriching': return 'initializing';
+    case 'generating': return 'in-progress';
+    case 'building': case 'build_fixing': return 'generated';
+    case 'auditing_static': case 'auditing_llm': case 'audit_fixing': return 'built';
+    case 'deploying': return 'audited';
+    case 'done': return 'deployed';
+    case 'failed': return 'draft';
+    default: return 'in-progress';
+  }
+}
+
 export default function Dashboard() {
   const { disconnect } = useWallet();
   const { hasEnoughCredits, loadBalance } = useCredits();
@@ -53,7 +67,6 @@ export default function Dashboard() {
   // API хук (compat stubs for project management UI)
   const {
     user,
-    projects,
     isLoading,
     error,
     generateContract,
@@ -64,9 +77,17 @@ export default function Dashboard() {
     trackTaskStatus,
     loadProjects,
     createProject,
-    updateProjects,
     loadChatHistory,
   } = useBummApi();
+
+  // ── Real projects state (useBummApi.projects / updateProjects are no-op stubs) ──
+  const [projects, setProjects] = useState<Project[]>([]);
+  const updateProjects = useCallback(
+    (updater: ((prev: Project[]) => Project[]) | Project[]) => {
+      setProjects(prev => typeof updater === 'function' ? updater(prev) : updater);
+    },
+    [],
+  );
   
   // Global error handler
   useEffect(() => {
@@ -182,8 +203,9 @@ export default function Dashboard() {
   // ── Track current pipeline phase for preview panel animations ────────────
   const [pipelinePhase, setPipelinePhase] = useState<string | null>(null);
 
-  // ── Helper: save project to localStorage keyed by wallet ─────────────────
+  // ── Helper: save project to backend + localStorage cache ─────────────────
   const saveProject = useCallback((project: Project) => {
+    // Also cache in localStorage for offline fallback
     if (typeof window === 'undefined') return;
     const wallet = auth.walletAddress;
     if (!wallet) return;
@@ -195,38 +217,74 @@ export default function Dashboard() {
     } catch (_) {}
   }, [auth.walletAddress]);
 
-  // ── Load projects from localStorage when wallet connects ─────────────────
-  useEffect(() => {
-    if (!auth.isAuthenticated || !auth.walletAddress) return;
-    const key = `bumm_projects_${auth.walletAddress}`;
+  // ── Load projects from BACKEND when wallet connects ─────────────────────
+  const loadProjectsFromBackend = useCallback(async () => {
     try {
-      const saved: Project[] = JSON.parse(localStorage.getItem(key) || '[]');
-      if (saved.length > 0) {
-        // useBummApi projects are managed separately — sync wallet projects into it
-        saved.forEach(p => {
-          updateProjects(prev =>
-            prev.some(x => x.uid === p.uid) ? prev : [p, ...prev]
-          );
-        });
+      const res = await apiClient.listContracts();
+      const backendProjects: Project[] = res.contracts.map(c => ({
+        uid: c.uid,
+        name: c.name || `Contract ${c.uid.slice(0, 8)}`,
+        status: mapPhaseToStatus(c.phase),
+        created_at: c.created_at,
+        updated_at: c.updated_at,
+        task: 'generate' as const,
+        bummUid: c.uid,
+        contractAddress: c.program_id || undefined,
+        isDeployed: !!c.program_id,
+      }));
+      updateProjects(() => backendProjects);
+      // Also cache in localStorage
+      if (auth.walletAddress) {
+        try {
+          localStorage.setItem(`bumm_projects_${auth.walletAddress}`, JSON.stringify(backendProjects));
+        } catch (_) {}
       }
-    } catch (_) {}
+    } catch (err) {
+      console.warn('Failed to load projects from backend, using localStorage:', err);
+      // Fallback to localStorage
+      if (auth.walletAddress) {
+        const key = `bumm_projects_${auth.walletAddress}`;
+        try {
+          const saved: Project[] = JSON.parse(localStorage.getItem(key) || '[]');
+          if (saved.length > 0) updateProjects(() => saved);
+        } catch (_) {}
+      }
+    }
+  }, [auth.walletAddress, updateProjects]);
+
+  useEffect(() => {
+    if (!auth.isAuthenticated) return;
+    loadProjectsFromBackend();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.isAuthenticated, auth.walletAddress]);
+  }, [auth.isAuthenticated]);
 
   // ── WebSocket phase watcher ─────────────────────────────────────────────────
+  // Track whether we've already created the project for this contract uid
+  // so step-mode WS heartbeats don't re-trigger project creation.
+  const projectCreatedRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (!contract.status) return;
-    const { phase, error } = contract.status;
+    const { phase, error, next_step } = contract.status;
 
     // Always update animation phase
     setPipelinePhase(phase);
 
     if (!pipelineMsgId) return;
 
+    // ── Step-mode: generate is done when next_step === 'build' ──────────────
+    // The pipeline has paused before the build node. Create the project now
+    // and show the "ready to build" message. Only do this once per contract.
+    const generateDone =
+      next_step === 'build' && activeContractUid &&
+      projectCreatedRef.current !== activeContractUid;
+
     const labels: Record<string, string> = {
       pending:          '⏳ Queued — waiting for worker...',
       enriching:        '🔍 Analyzing your request...',
-      generating:       '⚡ Generating Solana smart contract...',
+      generating:       generateDone
+                          ? '✅ Contract generated! Click Build to compile.'
+                          : '⚡ Generating Solana smart contract...',
       building:         '🔧 Building with Anchor framework...',
       build_fixing:     '🔧 Fixing build errors...',
       auditing_static:  '🔒 Running static security audit...',
@@ -234,7 +292,7 @@ export default function Dashboard() {
       audit_fixing:     '🔒 Fixing security issues...',
       deploying:        '🚀 Deploying to devnet...',
       learning:         '🧠 Updating knowledge base...',
-      done:             '✅ Contract generated! Review the code on the right.',
+      done:             '✅ Contract deployed! View the program address.',
       failed:           `❌ Pipeline failed: ${error ?? 'Unknown error'}`,
     };
 
@@ -246,49 +304,132 @@ export default function Dashboard() {
       )
     );
 
-    if (phase === 'done') {
+    // Helper: build a project record and save it
+    const createProjectFromCode = (uid: string, code: string) => {
+      const chatSnapshot = messages.filter(m =>
+        !m.content.startsWith('⏳') && !m.content.startsWith('⚙️') &&
+        !m.content.startsWith('🔍') && !m.content.startsWith('⚡') &&
+        !m.content.startsWith('🔧') && !m.content.startsWith('🔒') &&
+        !m.content.startsWith('🚀') && !m.content.startsWith('🧠')
+      );
+      const firstUserMsg = chatSnapshot.find(m => m.isUser);
+      const projectName = firstUserMsg
+        ? firstUserMsg.content.slice(0, 40) + (firstUserMsg.content.length > 40 ? '...' : '')
+        : `Contract ${uid.slice(0, 8)}`;
+
+      const newProject: Project = {
+        uid,
+        name: projectName,
+        status: 'generated',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        task: 'generate',
+        bummUid: uid,
+        code,
+      };
+      setCurrentProject(newProject);
+      updateProjects(prev => [newProject, ...prev.filter(p => p.uid !== uid)]);
+      saveProject(newProject);
+      projectCreatedRef.current = uid;
+      // Persist button state per-project so it survives page refresh
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(`bumm_action_button_state_${uid}`, 'build');
+          localStorage.setItem('bumm_action_button_state', 'build');
+        } catch (_) {}
+      }
+
+      // Persist to backend
+      apiClient.updateContract(uid, { name: projectName }).catch(() => {});
+      const chatForBackend = chatSnapshot.map(m => ({
+        role: m.isUser ? 'user' : 'assistant',
+        content: m.content,
+        timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
+      }));
+      apiClient.saveContractChat(uid, chatForBackend).catch(() => {});
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem(`bumm_chat_history_${uid}`, JSON.stringify(chatSnapshot)); } catch (_) {}
+      }
+    };
+
+    // ── Step-mode: generate done → create project and stop watching ─────────
+    if (generateDone) {
+      const uid = activeContractUid!;
+      // Guard BEFORE async work to prevent double-trigger from WS heartbeats
+      projectCreatedRef.current = uid;
+
+      // Create project shell immediately — sidebar updates right away,
+      // Build button appears, no waiting for code fetch
+      const chatSnapshot = messages.filter(m =>
+        !m.content.startsWith('⏳') && !m.content.startsWith('⚙️') &&
+        !m.content.startsWith('🔍') && !m.content.startsWith('⚡') &&
+        !m.content.startsWith('🔧') && !m.content.startsWith('🔒') &&
+        !m.content.startsWith('🚀') && !m.content.startsWith('🧠')
+      );
+      const firstUserMsg = chatSnapshot.find(m => m.isUser);
+      const earlyName = firstUserMsg
+        ? firstUserMsg.content.slice(0, 40) + (firstUserMsg.content.length > 40 ? '...' : '')
+        : `Contract ${uid.slice(0, 8)}`;
+      const earlyProject: Project = {
+        uid,
+        name: earlyName,
+        status: 'generated',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        task: 'generate',
+        bummUid: uid,
+        code: '',
+      };
+      setCurrentProject(earlyProject);
+      updateProjects(prev => [earlyProject, ...prev.filter(p => p.uid !== uid)]);
+      saveProject(earlyProject);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(`bumm_action_button_state_${uid}`, 'build');
+          localStorage.setItem('bumm_action_button_state', 'build');
+        } catch (_) {}
+      }
+      apiClient.updateContract(uid, { name: earlyName }).catch(() => {});
+
+      // Fetch the generated code and enrich the project
       contract.getCode().then(result => {
-        const uid = activeContractUid!;
         if (typeof window !== 'undefined') {
           try { localStorage.setItem(`bumm_contract_code_${uid}`, result.code); } catch (_) {}
         }
         setGeneratedCode({ projectUid: uid, code: result.code });
-
-        // ── Create project only on successful generation ──────────────────
-        const chatSnapshot = messages.filter(m =>
-          !m.content.startsWith('⏳') && !m.content.startsWith('⚙️') &&
-          !m.content.startsWith('🔍') && !m.content.startsWith('⚡') &&
-          !m.content.startsWith('🔧') && !m.content.startsWith('🔒') &&
-          !m.content.startsWith('🚀') && !m.content.startsWith('🧠')
-        );
-        const firstUserMsg = chatSnapshot.find(m => m.isUser);
-        const projectName = firstUserMsg
-          ? firstUserMsg.content.slice(0, 40) + (firstUserMsg.content.length > 40 ? '...' : '')
-          : `Contract ${uid.slice(0, 8)}`;
-
-        const newProject: Project = {
-          uid,
-          name: projectName,
-          status: 'generated',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          task: 'generate',
-          bummUid: uid,
-          code: result.code,
-        };
-        setCurrentProject(newProject);
-        updateProjects(prev => [newProject, ...prev.filter(p => p.uid !== uid)]);
-        saveProject(newProject);
-        // Save chat history for this project
-        if (typeof window !== 'undefined') {
-          try {
-            localStorage.setItem(`bumm_chat_history_${uid}`, JSON.stringify(chatSnapshot));
-          } catch (_) {}
-        }
-
+        createProjectFromCode(uid, result.code);
         loadBalance().catch(() => {});
         setPipelinePhase(null);
-      }).catch(() => {});
+      }).catch(() => {
+        setPipelinePhase(null);
+      });
+      // Stop watching — build/audit/deploy modals handle their own polling
+      setPipelineMsgId(null);
+      setActiveContractUid(null);
+    } else if (phase === 'done') {
+      // Full pipeline done (API mode) OR deploy done (step mode)
+      const uid = activeContractUid!;
+      if (projectCreatedRef.current !== uid) {
+        // Full auto-pipeline (API mode): create project now
+        contract.getCode().then(result => {
+          if (typeof window !== 'undefined') {
+            try { localStorage.setItem(`bumm_contract_code_${uid}`, result.code); } catch (_) {}
+          }
+          setGeneratedCode({ projectUid: uid, code: result.code });
+          createProjectFromCode(uid, result.code);
+          loadBalance().catch(() => {});
+          setPipelinePhase(null);
+        }).catch(() => {});
+      } else {
+        // Step mode: deploy just finished — update project status
+        setCurrentProject(prev => prev ? { ...prev, status: 'deployed', isDeployed: true, contractAddress: contract.status?.program_id ?? undefined } : prev);
+        updateProjects(prev => prev.map(p =>
+          p.uid === uid
+            ? { ...p, status: 'deployed', isDeployed: true, contractAddress: contract.status?.program_id ?? undefined }
+            : p
+        ));
+        setPipelinePhase(null);
+      }
       setPipelineMsgId(null);
       setActiveContractUid(null);
     } else if (phase === 'failed') {
@@ -322,7 +463,22 @@ export default function Dashboard() {
     }]);
 
     try {
-      const created = await contract.createContract(enrichedPrompt);
+      // Pass chat history so it's saved with the contract in DB
+      const chatHistory = messages
+        .filter(m => !m.content.startsWith('⏳') && !m.content.startsWith('⚙️'))
+        .map(m => ({
+          role: m.isUser ? 'user' : 'assistant',
+          content: m.content,
+        }));
+      const firstUserMsg = chatHistory.find(m => m.role === 'user');
+      const projectName = firstUserMsg
+        ? firstUserMsg.content.slice(0, 40) + (firstUserMsg.content.length > 40 ? '...' : '')
+        : 'New Contract';
+
+      const created = await contract.createContract(enrichedPrompt, 'devnet', {
+        name: projectName,
+        chat_history: chatHistory,
+      });
       setActiveContractUid(created.uid);
     } catch (err) {
       console.error('launchPipeline error:', err);
@@ -631,22 +787,45 @@ export default function Dashboard() {
   // Project management functions
   const handleSelectProject = async (project: Project) => {
     try {
-      console.log(`🔄 Switching to project ${project.uid}`);
-      
       // Save current messages for current project (if any)
       if (currentProject && messages.length > 0) {
         localStorage.setItem(`bumm_chat_history_${currentProject.uid}`, JSON.stringify(messages));
+        // Also save to backend
+        const chatForBackend = messages
+          .filter(m => !m.content.startsWith('⏳') && !m.content.startsWith('⚙️'))
+          .map(m => ({
+            role: m.isUser ? 'user' : 'assistant',
+            content: m.content,
+            timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
+          }));
+        apiClient.saveContractChat(currentProject.uid, chatForBackend).catch(() => {});
       }
-      
+
       // Switch to new project
       setCurrentProject(project);
-      
-      // Load chat history for new project
+
+      // Try to load chat from backend first, then localStorage fallback
+      try {
+        const chatRes = await apiClient.getContractChat(project.uid);
+        if (chatRes.messages && chatRes.messages.length > 0) {
+          const loadedMessages: ChatMessage[] = chatRes.messages.map((m: Record<string, unknown>, i: number) => ({
+            id: `loaded_${i}_${Date.now()}`,
+            content: (m.content as string) || '',
+            timestamp: new Date((m.timestamp as string) || Date.now()),
+            isUser: m.role === 'user',
+          }));
+          setMessages(loadedMessages);
+          return;
+        }
+      } catch (_) {
+        // Backend unavailable, fall through to localStorage
+      }
+
+      // Fallback: localStorage
       const savedMessages = localStorage.getItem(`bumm_chat_history_${project.uid}`);
       if (savedMessages) {
         try {
           const parsedMessages = JSON.parse(savedMessages);
-          // Convert timestamp strings back to Date objects
           const messagesWithDates = parsedMessages.map((msg: ChatMessage) => ({
             ...msg,
             timestamp: new Date(msg.timestamp)
@@ -657,10 +836,9 @@ export default function Dashboard() {
           setMessages([]);
         }
       } else {
-        // If no saved history, start with empty chat
         setMessages([]);
       }
-      
+
     } catch (err) {
       console.error('Failed to switch project:', err);
     }
@@ -668,21 +846,19 @@ export default function Dashboard() {
 
   const handleRenameProject = async (project: Project, newName: string) => {
     try {
-      console.log(`📝 Renaming project ${project.uid} to ${newName}`);
-      
-      // Update project locally
-      updateProjects(prev => prev.map(p => 
-        p.uid === project.uid 
+      // Update on backend
+      await apiClient.updateContract(project.uid, { name: newName });
+
+      // Update locally
+      updateProjects(prev => prev.map(p =>
+        p.uid === project.uid
           ? { ...p, name: newName, updated_at: new Date().toISOString() }
           : p
       ));
-      
-      // Update current project если это он
+
       if (currentProject?.uid === project.uid) {
         setCurrentProject(prev => prev ? { ...prev, name: newName } : null);
       }
-      
-      addAIMessage(`📝 Project renamed to "${newName}"`);
     } catch (err) {
       console.error('Failed to rename project:', err);
       addAIMessage(`Failed to rename project: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -691,26 +867,19 @@ export default function Dashboard() {
 
   const handleDeleteProject = async (project: Project) => {
     try {
-      console.log(`Deleting project ${project.uid}`);
-      
-      // Remove project from list
+      // Delete on backend
+      await apiClient.deleteContract(project.uid);
+
+      // Remove locally
       updateProjects(prev => prev.filter(p => p.uid !== project.uid));
-      
-      // If this is current project, switch to another or clear
+
       if (currentProject?.uid === project.uid) {
         const remainingProjects = projects.filter(p => p.uid !== project.uid);
         setCurrentProject(remainingProjects.length > 0 ? remainingProjects[0] : null);
-        
-        // If no other projects, clear chat
-        if (remainingProjects.length === 0) {
-          setMessages([]);
-        }
+        if (remainingProjects.length === 0) setMessages([]);
       }
-      
-      // Analytics tracking
+
       analytics.trackProjectDelete(project.uid);
-      
-      addAIMessage(`Project "${project.name || 'Untitled'}" deleted`);
     } catch (err) {
       console.error('Failed to delete project:', err);
       addAIMessage(`Failed to delete project: ${err instanceof Error ? err.message : 'Unknown error'}`);

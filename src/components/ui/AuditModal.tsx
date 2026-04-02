@@ -3,7 +3,8 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Shield, AlertTriangle, CheckCircle, Search, FileText, Code, Zap } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { API_BASE_URL, API_ENDPOINTS } from '@/config/api';
+import { API_BASE_URL, ENDPOINTS } from '@/config/api';
+import { apiClient } from '@/services/api';
 
 interface AuditModalProps {
   isOpen: boolean;
@@ -13,14 +14,6 @@ interface AuditModalProps {
   onAddMessage?: (message: string) => void;
   messages?: Array<{ content: string; [key: string]: unknown }>;
   bummUid?: string;
-}
-
-interface AuditStep {
-  id: number;
-  title: string;
-  description: string;
-  status: 'pending' | 'active' | 'completed';
-  icon: React.ComponentType<{ className?: string }>;
 }
 
 interface Vulnerability {
@@ -37,287 +30,125 @@ interface AuditResult {
     low: number;
   };
   vulnerabilityList: Vulnerability[];
-  hasPatches: boolean;
 }
 
-const auditSteps: AuditStep[] = [
-  {
-    id: 1,
-    title: 'Preparing for Analysis',
-    description: 'Examining contract dependencies and compiling code for deep analysis.',
-    status: 'pending',
-    icon: Search
-  },
-  {
-    id: 2,
-    title: 'Static Code Analysis (SAST)',
-    description: 'Scanning for missing validations, arithmetic vulnerabilities, and insecure patterns.',
-    status: 'pending',
-    icon: Code
-  },
-  {
-    id: 3,
-    title: 'Data and Control Flow Analysis',
-    description: 'Analyzing account interactions and tracing untrusted inputs to sensitive functions.',
-    status: 'pending',
-    icon: Zap
-  },
-  {
-    id: 4,
-    title: 'Economic Exploit Simulation',
-    description: 'Testing for flash loan attacks, price manipulation, and MEV vulnerabilities.',
-    status: 'pending',
-    icon: AlertTriangle
-  },
-  {
-    id: 5,
-    title: 'Generating Security Report',
-    description: 'Classifying vulnerabilities by severity and providing remediation recommendations.',
-    status: 'pending',
-    icon: FileText
-  },
-  {
-    id: 6,
-    title: 'Finalizing Remediation',
-    description: 'Generating suggested code patches for identified vulnerabilities.',
-    status: 'pending',
-    icon: Shield
-  }
-];
+const AUDIT_PHASES = ['auditing_static', 'auditing_llm', 'audit_fixing'];
 
-export const AuditModal = ({ isOpen, onClose, onComplete, contractCode, onAddMessage, messages, bummUid }: AuditModalProps) => {
-  
-  // Function for displaying animated stage icons
-  const getStageIcon = (step: AuditStep, index: number) => {
-    const IconComponent = step.icon;
-    if (index < currentStep) {
-      return <CheckCircle className="w-5 h-5 text-green-400" />;
-    } else if (index === currentStep && !isCompleted) {
-      return (
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-        >
-          <IconComponent className="w-5 h-5 text-orange-400" />
-        </motion.div>
-      );
-    }
-    return <IconComponent className="w-5 h-5 text-gray-500" />;
-  };
-  const [currentStep, setCurrentStep] = useState(0);
-  const [isCompleted, setIsCompleted] = useState(false);
-  const [auditResult, setAuditResult] = useState<AuditResult | null>(null);
-  const [isRerunning, setIsRerunning] = useState(false);
-  const [displaySteps, setDisplaySteps] = useState<typeof auditSteps>(auditSteps);
-  const [patchesApplied, setPatchesApplied] = useState(false);
+const STEP_LABELS: Record<string, string> = {
+  auditing_static: 'Static Analysis (clippy + cargo-audit)',
+  auditing_llm:    'LLM Security Review (GPT-4o)',
+  audit_fixing:    'Applying Security Fixes',
+  building:        'Rebuilding with Fixes',
+  build_fixing:    'Rebuilding with Fixes',
+};
 
-  // Реальный API-audit c использованием backend bummUid (если есть)
+export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid }: AuditModalProps) => {
+  const [currentPhase, setCurrentPhase] = useState('');
+  const [isCompleted, setIsCompleted]   = useState(false);
+  const [auditResult, setAuditResult]   = useState<AuditResult | null>(null);
+  const [errorMsg, setErrorMsg]         = useState('');
+
   useEffect(() => {
     if (!isOpen) {
-      setCurrentStep(0);
+      setCurrentPhase('');
       setIsCompleted(false);
       setAuditResult(null);
+      setErrorMsg('');
+      return;
+    }
+
+    if (!bummUid) {
+      setErrorMsg('No contract ID found. Generate the contract first.');
+      setIsCompleted(true);
       return;
     }
 
     let cancelled = false;
-    let animInterval: NodeJS.Timeout;
 
     const runAudit = async () => {
       try {
-        const userId = localStorage.getItem('bumm_user_uid') || '';
-        const textToSend = bummUid || contractCode;
+        // Trigger the audit step — pipeline was paused before audit_static.
+        await apiClient.triggerAudit(bummUid);
 
-        const startRes = await fetch(`${API_BASE_URL}${API_ENDPOINTS.BUMM_AUDIT}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-          body: JSON.stringify({ text: textToSend }),
-        });
+        const token = localStorage.getItem('access_token') || '';
+        const headers: HeadersInit = token
+          ? { Authorization: `Bearer ${token}` }
+          : {};
 
-        if (!startRes.ok) {
-          if (startRes.status === 402) {
-            setIsCompleted(true);
-            onAddMessage?.('Insufficient credits for audit (50 credits needed)');
-            return;
-          }
-          throw new Error(`Audit start failed: ${startRes.status}`);
-        }
-
-        const { uid: auditUid } = await startRes.json();
-
-        // Анимация шагов во время опроса
-        let step = 0;
-        animInterval = setInterval(() => {
-          if (cancelled) return;
-          step = Math.min(
-            step + 1,
-            (displaySteps?.length || auditSteps.length) - 2
-          );
-          setCurrentStep(step);
-        }, 2500);
-
-        // Poll status
+        const maxAttempts = 180; // 6 min at 2s intervals
         let attempts = 0;
-        while (!cancelled && attempts < 60) {
-          await new Promise(r => setTimeout(r, 3000));
+
+        while (!cancelled && attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 2000));
           attempts++;
 
           const res = await fetch(
-            `${API_BASE_URL}${API_ENDPOINTS.BUMM_AUDIT_STATUS}${auditUid}/`,
-            { headers: { 'x-user-id': userId } }
+            `${API_BASE_URL}${ENDPOINTS.CONTRACT_STATUS(bummUid)}`,
+            { headers },
           );
           if (!res.ok) continue;
+
           const data = await res.json();
+          const phase: string = data.phase ?? '';
+          setCurrentPhase(phase);
 
-          if (data.status === 'audited' && data.report) {
-            clearInterval(animInterval);
-            setCurrentStep((displaySteps?.length || auditSteps.length) - 1);
+          // Audit is done when pipeline paused before deploy (next_step="deploy")
+          // or when audit phases are finished.
+          const auditDone = data.next_step === 'deploy' ||
+            (data.phase === 'done') ||
+            (data.build_ok && !AUDIT_PHASES.includes(phase) && !['building', 'build_fixing'].includes(phase) && phase !== 'generating' && phase !== 'enriching' && phase !== 'not_started');
 
-            let report: any;
-            try { report = JSON.parse(data.report); }
-            catch { report = { issues: [], summary: data.report }; }
+          if (auditDone) {
+            // Fetch detailed audit results from the DB
+            const auditData = await apiClient.getContractAudit(bummUid);
 
-            const issues = report.issues || report.vulnerabilities || [];
-            const critical = issues.filter((i: any) => i.severity === 'critical').length;
-            const high = issues.filter((i: any) => i.severity === 'high').length;
-            const medium = issues.filter((i: any) => i.severity === 'medium').length;
-            const low = issues.filter((i: any) => ['low', 'info'].includes(i.severity)).length;
-            const score = Math.max(0, 100 - critical * 25 - high * 15 - medium * 5 - low);
+            // Parse vulnerabilities from backend response
+            const vulns: Array<{ severity: string; title: string; description: string }> =
+              Array.isArray(auditData.vulns) ? auditData.vulns as any[] : [];
 
-            setAuditResult({
+            const critical = vulns.filter(v => v.severity === 'critical').length;
+            const high     = vulns.filter(v => v.severity === 'high').length;
+            const medium   = vulns.filter(v => v.severity === 'medium').length;
+            const low      = vulns.filter(v => ['low', 'info'].includes(v.severity)).length;
+            const score    = Math.max(0, 100 - critical * 25 - high * 15 - medium * 5 - low);
+
+            const result: AuditResult = {
               securityScore: score,
               vulnerabilities: { critical, high, medium, low },
-              vulnerabilityList: issues.map((i: any) => ({
-                name: i.title || i.name || i.description,
-                severity: i.severity,
+              vulnerabilityList: vulns.map(v => ({
+                name: v.title || v.description || 'Unknown issue',
+                severity: (v.severity as Vulnerability['severity']) || 'low',
               })),
-              hasPatches: critical > 0 || high > 0,
-            });
+            };
+
+            setAuditResult(result);
             setIsCompleted(true);
-            onAddMessage?.(`Audit complete! Score: ${score}/100 (${issues.length} issues found)`);
+            onAddMessage?.(`Audit complete! Score: ${score}/100 (${vulns.length} issues found)`);
             return;
           }
 
-          if (data.status === 'error') {
-            throw new Error(data.error || 'Audit failed');
+          if (phase === 'failed') {
+            throw new Error(data.error || 'Audit pipeline failed');
           }
         }
 
-        throw new Error('Audit timed out');
+        throw new Error('Audit timed out after 6 minutes');
       } catch (err) {
-        console.error('Audit error:', err);
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : 'Audit failed';
+        setErrorMsg(msg);
         setIsCompleted(true);
         setAuditResult({
           securityScore: 0,
           vulnerabilities: { critical: 0, high: 0, medium: 0, low: 0 },
-          vulnerabilityList: [{ name: String(err), severity: 'critical' }],
-          hasPatches: false,
+          vulnerabilityList: [{ name: msg, severity: 'critical' }],
         });
       }
     };
 
     runAudit();
-    return () => { cancelled = true; if (animInterval) clearInterval(animInterval); };
-  }, [isOpen, contractCode, bummUid, displaySteps, onAddMessage]);
-
-  const handleNextStep = () => {
-    onComplete(false);
-  };
-
-  const handleComplete = () => {
-    // Audit message already added automatically in useEffect
-    // Here we only complete the audit process
-    onComplete(false);
-    onClose();
-  };
-
-  const handleRerunAudit = () => {
-    if (!auditResult) return;
-    
-    setIsRerunning(true);
-    setIsCompleted(false);
-    setCurrentStep(0);
-    setAuditResult(null);
-    
-    // Add "Apply Patches" step if vulnerabilities exist
-    const hasVulnerabilities = Object.values(auditResult.vulnerabilities).reduce((sum, count) => sum + count, 0) > 0;
-    
-    if (hasVulnerabilities) {
-      // Start with Apply Patches step, then audit steps, then rebuild
-      const applyPatchesStep = {
-        id: 0,
-        title: 'Apply Security Patches',
-        description: 'Automatically applying recommended security fixes and updating code patterns.',
-        status: 'pending' as const,
-        icon: Shield
-      };
-      
-      const rebuildStep = {
-        id: auditSteps.length + 1,
-        title: 'Contract Rebuild',
-        description: 'Recompiling the contract with applied security patches.',
-        status: 'pending' as const,
-        icon: Code
-      };
-      
-      // Create new steps array with Apply Patches + original audit steps + rebuild
-      const rerunSteps = [
-        applyPatchesStep, 
-        ...auditSteps.map((step, index) => ({
-          ...step,
-          id: index + 1,
-          status: 'pending' as const
-        })),
-        rebuildStep
-      ];
-      
-      // Set display steps for rerun
-      setDisplaySteps(rerunSteps);
-      
-      // Simulate the process with Apply Patches first
-      let stepIndex = 0;
-      const processStep = () => {
-        if (stepIndex < rerunSteps.length) {
-          setCurrentStep(stepIndex);
-          setTimeout(() => {
-            stepIndex++;
-            if (stepIndex >= rerunSteps.length) {
-              // Rerun completed with better results
-              setIsCompleted(true);
-              setPatchesApplied(true); // Patches have been applied
-              setAuditResult({
-                securityScore: 85, // Much better score after fixes
-                vulnerabilities: {
-                  critical: 0, // Fixed all critical
-                  high: 0,
-                  medium: 1, // One medium issue remains
-                  low: 0
-                },
-                vulnerabilityList: [
-                  { name: 'Minor gas optimization opportunity', severity: 'medium' }
-                ],
-                hasPatches: false // No more patches needed
-              });
-              setIsRerunning(false);
-              
-              // Prevent duplicate audit completion message
-              if (onAddMessage) {
-                const successMessage = 'Audit completed! Contract is ready for deployment. Security score improved to 85/100. Only 1 minor optimization opportunity remains.';
-                if (!messages?.some(m => m.content.includes('Audit completed!') && m.content.includes('Security score improved to 85/100'))) {
-                  setTimeout(() => {
-                    onAddMessage(successMessage);
-                  }, 500);
-                }
-              }
-            } else {
-              processStep();
-            }
-          }, 1000); // Reduced from 2000 to 1000
-        }
-      };
-      processStep();
-    }
-  };
+    return () => { cancelled = true; };
+  }, [isOpen, bummUid, onAddMessage]);
 
   const getScoreColor = (score: number) => {
     if (score >= 90) return 'text-green-400';
@@ -328,12 +159,14 @@ export const AuditModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
   const getSeverityColor = (severity: string) => {
     switch (severity) {
       case 'critical': return 'text-red-500';
-      case 'high': return 'text-orange-500';
-      case 'medium': return 'text-yellow-500';
-      case 'low': return 'text-blue-500';
-      default: return 'text-gray-500';
+      case 'high':     return 'text-orange-500';
+      case 'medium':   return 'text-yellow-500';
+      case 'low':      return 'text-blue-500';
+      default:         return 'text-gray-500';
     }
   };
+
+  const currentLabel = STEP_LABELS[currentPhase] || 'Analyzing…';
 
   if (!isOpen) return null;
 
@@ -348,7 +181,7 @@ export const AuditModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
           className="absolute inset-0 bg-black/70 backdrop-blur-sm"
           onClick={onClose}
         />
-        
+
         {/* Modal */}
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
@@ -367,147 +200,127 @@ export const AuditModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
                 <p className="text-xs text-gray-400 hidden md:block">Security analysis in progress</p>
               </div>
             </div>
-            <button
-              onClick={onClose}
-              className="p-1.5 hover:bg-[#333] rounded-lg transition-colors"
-            >
+            <button onClick={onClose} className="p-1.5 hover:bg-[#333] rounded-lg transition-colors">
               <X className="w-4 h-4 text-gray-400" />
             </button>
           </div>
 
-                {/* Content */}
           <div className="flex flex-col">
             {!isCompleted ? (
-              <>
-                {/* Progress Header */}
-                <div className="p-4 pb-2">
-                  <h3 className="text-base font-semibold text-white mb-2">Audit Progress</h3>
-                  <div className="flex items-center gap-2 text-orange-400">
+              <div className="p-4 space-y-4">
+                {/* Active phase indicator */}
+                <div className="bg-[#191919] rounded-lg p-2.5 border border-orange-500/20">
+                  <div className="flex items-center gap-2">
                     <div className="flex gap-1">
-                      <motion.div 
-                        className="w-2 h-2 bg-orange-400 rounded-full"
-                        animate={{ 
-                          y: [0, -4, 0],
-                          scale: [1, 1.2, 1]
-                        }}
-                        transition={{ 
-                          duration: 0.6,
-                          repeat: Infinity,
-                          delay: 0
-                        }}
-                      />
-                      <motion.div 
-                        className="w-2 h-2 bg-orange-400 rounded-full"
-                        animate={{ 
-                          y: [0, -4, 0],
-                          scale: [1, 1.2, 1]
-                        }}
-                        transition={{ 
-                          duration: 0.6,
-                          repeat: Infinity,
-                          delay: 0.2
-                        }}
-                      />
-                      <motion.div 
-                        className="w-2 h-2 bg-orange-400 rounded-full"
-                        animate={{ 
-                          y: [0, -4, 0],
-                          scale: [1, 1.2, 1]
-                        }}
-                        transition={{ 
-                          duration: 0.6,
-                          repeat: Infinity,
-                          delay: 0.4
-                        }}
-                      />
+                      {[0, 1, 2].map(i => (
+                        <motion.div
+                          key={i}
+                          className="w-2 h-2 bg-orange-400 rounded-full"
+                          animate={{ y: [0, -4, 0], scale: [1, 1.2, 1] }}
+                          transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.2 }}
+                        />
+                      ))}
                     </div>
-                    <span className="text-sm">
-                      {currentStep < displaySteps.length ? displaySteps[currentStep].title : 'Analyzing...'}
-                    </span>
+                    <span className="text-white font-medium text-sm">{currentLabel}</span>
                   </div>
+                  <p className="text-xs text-gray-500 mt-1">This may take 1–4 minutes</p>
                 </div>
 
-                {/* Steps - Compact Grid */}
-                <div className="px-4 pb-4">
-                  <div className="grid grid-cols-2 gap-2">
-                    {displaySteps.map((step, index) => (
+                {/* Phase steps */}
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { phase: 'auditing_static', icon: Search,      label: 'Static Analysis' },
+                    { phase: 'auditing_llm',    icon: Zap,         label: 'LLM Review' },
+                    { phase: 'audit_fixing',    icon: Code,        label: 'Fix Vulnerabilities' },
+                    { phase: 'done',            icon: FileText,    label: 'Generate Report' },
+                  ].map(({ phase, icon: Icon, label }) => {
+                    const isDone = currentPhase === 'done' ||
+                      (AUDIT_PHASES.indexOf(currentPhase) > AUDIT_PHASES.indexOf(phase));
+                    const isActive = currentPhase === phase;
+                    return (
                       <div
-                        key={step.id}
+                        key={phase}
                         className={`p-2 rounded-md border transition-all ${
-                          index <= currentStep
+                          isActive
                             ? 'border-orange-500/30 bg-orange-500/5'
+                            : isDone
+                            ? 'border-green-500/30 bg-green-500/5'
                             : 'border-[#333] bg-[#191919]/50'
                         }`}
                       >
                         <div className="flex items-center gap-2">
-                          <div className="flex-shrink-0">
-                            {getStageIcon(step, index)}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <h4 className={`font-medium text-xs truncate ${
-                              index <= currentStep ? 'text-white' : 'text-gray-500'
-                            }`}>
-                              {step.title}
-                            </h4>
-                          </div>
+                          {isDone ? (
+                            <CheckCircle className="w-4 h-4 text-green-400" />
+                          ) : isActive ? (
+                            <motion.div
+                              animate={{ rotate: 360 }}
+                              transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
+                            >
+                              <Icon className="w-4 h-4 text-orange-400" />
+                            </motion.div>
+                          ) : (
+                            <Icon className="w-4 h-4 text-gray-500" />
+                          )}
+                          <span className={`text-xs font-medium truncate ${
+                            isActive ? 'text-white' : isDone ? 'text-green-400' : 'text-gray-500'
+                          }`}>
+                            {label}
+                          </span>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
-              </>
+              </div>
             ) : (
-              <div className="p-4 flex flex-col h-full">
-                {/* Audit Results */}
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-3">
+              <div className="p-4 space-y-3">
+                <div className="flex items-center gap-2 mb-1">
+                  {errorMsg && !auditResult?.securityScore ? (
+                    <AlertTriangle className="w-5 h-5 text-red-400" />
+                  ) : (
                     <CheckCircle className="w-5 h-5 text-green-400" />
-                    <h3 className="text-base font-semibold text-white">Audit Complete</h3>
-                  </div>
-                  
-                  {auditResult && (
-                    <div className="space-y-3">
-                      <div className="bg-[#191919] border border-[#333] rounded-lg p-3">
-                        <div className="grid grid-cols-2 gap-3 mb-3">
-                          <div>
-                            <div className="text-xs text-gray-400 mb-1">Security Score</div>
-                            <div className={`text-xl font-bold ${getScoreColor(auditResult.securityScore)}`}>
-                              {auditResult.securityScore}/100
-                            </div>
-                          </div>
-                          <div>
-                            <div className="text-xs text-gray-400 mb-1">Total Issues</div>
-                            <div className="text-xl font-bold text-white">
-                              {Object.values(auditResult.vulnerabilities).reduce((sum, count) => sum + count, 0)}
-                            </div>
+                  )}
+                  <h3 className="text-base font-semibold text-white">
+                    {errorMsg && !auditResult?.securityScore ? 'Audit Error' : 'Audit Complete'}
+                  </h3>
+                </div>
+
+                {auditResult && (
+                  <div className="space-y-3">
+                    <div className="bg-[#191919] border border-[#333] rounded-lg p-3">
+                      <div className="grid grid-cols-2 gap-3 mb-3">
+                        <div>
+                          <div className="text-xs text-gray-400 mb-1">Security Score</div>
+                          <div className={`text-xl font-bold ${getScoreColor(auditResult.securityScore)}`}>
+                            {auditResult.securityScore}/100
                           </div>
                         </div>
-                        
-                        <div className="grid grid-cols-4 gap-2">
-                          {Object.entries(auditResult.vulnerabilities).map(([severity, count]) => (
-                            <div key={severity} className="text-center">
-                              <div className={`text-sm font-bold ${getSeverityColor(severity)}`}>
-                                {count}
-                              </div>
-                              <div className="text-xs text-gray-400 capitalize">
-                                {severity}
-                              </div>
-                            </div>
-                          ))}
+                        <div>
+                          <div className="text-xs text-gray-400 mb-1">Total Issues</div>
+                          <div className="text-xl font-bold text-white">
+                            {Object.values(auditResult.vulnerabilities).reduce((s, c) => s + c, 0)}
+                          </div>
                         </div>
                       </div>
-                      
-                      {/* Vulnerability List - Scrollable */}
-                      <div className="bg-[#191919] border border-[#333] rounded-lg">
-                        <div className="p-3 border-b border-[#333]">
-                          <h4 className="text-sm font-medium text-white">Detected Issues</h4>
+                      <div className="grid grid-cols-4 gap-2">
+                        {Object.entries(auditResult.vulnerabilities).map(([sev, count]) => (
+                          <div key={sev} className="text-center">
+                            <div className={`text-sm font-bold ${getSeverityColor(sev)}`}>{count}</div>
+                            <div className="text-xs text-gray-400 capitalize">{sev}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {auditResult.vulnerabilityList.length > 0 && (
+                      <div className="bg-[#191919] border border-[#333] rounded-lg max-h-40 overflow-y-auto">
+                        <div className="p-2 border-b border-[#333]">
+                          <h4 className="text-xs font-medium text-white">Detected Issues</h4>
                         </div>
-                        <div className="p-3 space-y-2">
-                          {auditResult.vulnerabilityList.map((vuln, index) => (
-                            <div key={index} className="flex items-start justify-between gap-2">
-                              <div className="text-xs text-gray-300 flex-1 leading-relaxed">
-                                {vuln.name}
-                              </div>
+                        <div className="p-2 space-y-1.5">
+                          {auditResult.vulnerabilityList.map((vuln, i) => (
+                            <div key={i} className="flex items-start justify-between gap-2">
+                              <div className="text-xs text-gray-300 flex-1 leading-relaxed">{vuln.name}</div>
                               <div className={`text-xs font-medium capitalize flex-shrink-0 ${getSeverityColor(vuln.severity)}`}>
                                 {vuln.severity}
                               </div>
@@ -515,32 +328,13 @@ export const AuditModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
                           ))}
                         </div>
                       </div>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
+                )}
 
-                {/* Action Buttons */}
-                <div className="flex gap-3 mt-4">
-                  {auditResult && Object.values(auditResult.vulnerabilities).reduce((sum, count) => sum + count, 0) > 0 && !patchesApplied && (
-                    <button
-                      onClick={handleRerunAudit}
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white rounded-lg font-medium transition-colors text-sm"
-                    >
-                      <AlertTriangle className="w-4 h-4" />
-                      Apply Security
-                    </button>
-                  )}
-                  {patchesApplied && (
-                    <button
-                      disabled
-                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-600 text-gray-400 rounded-lg font-medium text-sm cursor-not-allowed"
-                    >
-                      <CheckCircle className="w-4 h-4" />
-                      Security Applied
-                    </button>
-                  )}
+                <div className="flex gap-3 pt-1">
                   <button
-                    onClick={handleComplete}
+                    onClick={() => { onComplete(false); onClose(); }}
                     className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors text-sm"
                   >
                     Complete Audit

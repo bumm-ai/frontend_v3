@@ -224,9 +224,12 @@ export default function ChatScreen({
         const savedUpdateDate = localStorage.getItem(`bumm_last_update_date_${currentProject.uid}`);
         setLastUpdateDate(savedUpdateDate ? new Date(savedUpdateDate) : undefined);
         
-        // Update button state based on code presence and deployment state
-        if (savedCode && savedCode.trim()) {
-          // If contract is already deployed - show Upgrade
+        // Update button state: per-project saved state takes priority over heuristic
+        const savedButtonState = localStorage.getItem(`bumm_action_button_state_${currentProject.uid}`);
+        const validStates: ActionButtonState[] = ['build', 'audit', 'publish', 'upgrade', 'review', 'inactive'];
+        if (savedButtonState && validStates.includes(savedButtonState as ActionButtonState)) {
+          setActionButtonState(savedButtonState as ActionButtonState);
+        } else if (savedCode && savedCode.trim()) {
           if (savedDeployed === 'true') {
             setActionButtonState('upgrade');
           } else {
@@ -256,16 +259,19 @@ export default function ChatScreen({
     }
   }, [currentProject]);
 
-  // Save action button state to localStorage
+  // Save action button state to localStorage (global + per-project)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem('bumm_action_button_state', actionButtonState);
+        if (currentProject) {
+          localStorage.setItem(`bumm_action_button_state_${currentProject.uid}`, actionButtonState);
+        }
       } catch (err) {
         console.warn('Failed to save action button state to localStorage:', err);
       }
     }
-  }, [actionButtonState]);
+  }, [actionButtonState, currentProject]);
 
   // Save deployment state to localStorage
   useEffect(() => {

@@ -31,6 +31,14 @@ export function useContract(uid: string | null) {
   const attemptRef  = useRef(0);
   const closedRef   = useRef(false);
 
+  // ── Reset all fetched data when uid changes (new contract) ──────────────────
+  useEffect(() => {
+    setCode(null);
+    setAudit(null);
+    setStatus(null);
+    setError(null);
+  }, [uid]);
+
   // ── WebSocket lifecycle ──────────────────────────────────────────────────────
   const connectWs = useCallback((contractUid: string, attempt = 0) => {
     const token = getAccessToken();
@@ -88,11 +96,23 @@ export function useContract(uid: string | null) {
 
   // ── createContract ────────────────────────────────────────────────────────────
   const createContract = useCallback(
-    async (prompt: string, network: Network = 'devnet'): Promise<ContractCreated> => {
+    async (
+      prompt: string,
+      network: Network = 'devnet',
+      opts?: { name?: string; chat_history?: Array<{ role: string; content: string }> },
+    ): Promise<ContractCreated> => {
       setIsLoading(true);
       setError(null);
       try {
-        const result = await apiClient.createContract({ prompt, network });
+        const result = await apiClient.createContract({
+          prompt,
+          network,
+          name: opts?.name,
+          chat_history: opts?.chat_history as any,
+          // Frontend always uses step-mode: generate → user clicks Build →
+          // user clicks Audit → user clicks Deploy.
+          step_mode: true,
+        });
         return result;
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Failed to create contract';

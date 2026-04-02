@@ -2,10 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, ArrowUpRight, ArrowDownLeft, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { Zap, ArrowUpRight, ArrowDownLeft, Clock, XCircle } from 'lucide-react';
 import { useCredits } from '@/hooks/useCredits';
-import { CreditTransaction } from '@/services/creditService';
-import { API_BASE_URL } from '@/config/api';
+import { apiClient } from '@/services/api';
+import type { CreditTransactionItem } from '@/lib/api';
 
 interface CreditHistoryProps {
   isOpen: boolean;
@@ -14,7 +14,7 @@ interface CreditHistoryProps {
 
 export const CreditHistory = ({ isOpen, onClose }: CreditHistoryProps) => {
   const { balance } = useCredits();
-  const [transactions, setTransactions] = useState<CreditTransaction[]>([]);
+  const [transactions, setTransactions] = useState<CreditTransactionItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
@@ -26,23 +26,8 @@ export const CreditHistory = ({ isOpen, onClose }: CreditHistoryProps) => {
   const loadHistory = async () => {
     setIsLoading(true);
     try {
-      const userId = localStorage.getItem('bumm_user_uid') || '';
-      const res = await fetch(`${API_BASE_URL}/api/v1/credits/history?limit=50`, {
-        headers: { 'x-user-id': userId }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const txList: CreditTransaction[] = (data.transactions || []).map((tx: any) => ({
-          id: tx.id,
-          operationType: tx.operationType,
-          creditsSpent: Math.abs(tx.creditsSpent),
-          usdEquivalent: Math.abs(tx.creditsSpent) * 0.01,
-          description: tx.description,
-          createdAt: tx.createdAt,
-          bummId: tx.bummId,
-        }));
-        setTransactions(txList);
-      }
+      const data = await apiClient.getCreditHistory(50);
+      setTransactions(data.transactions);
     } catch (error) {
       console.error('Failed to load credit history:', error);
     } finally {
@@ -50,28 +35,29 @@ export const CreditHistory = ({ isOpen, onClose }: CreditHistoryProps) => {
     }
   };
 
-  const getOperationIcon = (type: string) => {
-    switch (type) {
-      case 'generate': return '';
-      case 'audit': return '';
-      case 'build': return '';
-      case 'deploy': return '';
-      case 'chat': return '';
-      case 'upgrade': return '';
-      default: return '';
+  const getOperationIcon = (txType: string, delta: number) => {
+    if (txType === 'purchase') return '💰';
+    if (txType === 'refund') return '↩️';
+    // Deductions — try to determine from notes
+    return delta < 0 ? '⚡' : '💰';
+  };
+
+  const getOperationColor = (txType: string) => {
+    switch (txType) {
+      case 'purchase': return 'text-green-400';
+      case 'refund': return 'text-blue-400';
+      case 'deduct': return 'text-red-400';
+      default: return 'text-gray-400';
     }
   };
 
-  const getOperationColor = (type: string) => {
-    switch (type) {
-      case 'generate': return 'text-blue-400';
-      case 'audit': return 'text-yellow-400';
-      case 'build': return 'text-orange-400';
-      case 'deploy': return 'text-green-400';
-      case 'chat': return 'text-purple-400';
-      case 'upgrade': return 'text-cyan-400';
-      default: return 'text-gray-400';
-    }
+  const getOperationLabel = (tx: CreditTransactionItem) => {
+    if (tx.tx_type === 'purchase') return 'Purchase';
+    if (tx.tx_type === 'refund') return 'Refund';
+    // Parse notes to determine operation
+    if (tx.notes?.includes('Chat')) return 'Chat';
+    if (tx.notes?.includes('Pipeline')) return 'Pipeline';
+    return 'Usage';
   };
 
   const formatTime = (dateString: string) => {
@@ -82,13 +68,9 @@ export const CreditHistory = ({ isOpen, onClose }: CreditHistoryProps) => {
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-    if (diffMins < 60) {
-      return `${diffMins}m ago`;
-    } else if (diffHours < 24) {
-      return `${diffHours}h ago`;
-    } else {
-      return `${diffDays}d ago`;
-    }
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    return `${diffDays}d ago`;
   };
 
   if (!isOpen) return null;
@@ -146,9 +128,9 @@ export const CreditHistory = ({ isOpen, onClose }: CreditHistoryProps) => {
               </div>
             ) : (
               <div className="space-y-2">
-                {transactions.map((transaction) => (
+                {transactions.map((tx) => (
                   <motion.div
-                    key={transaction.id}
+                    key={tx.uid}
                     className="bg-[#191919] rounded-lg p-2.5 border border-[#333]"
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -156,30 +138,43 @@ export const CreditHistory = ({ isOpen, onClose }: CreditHistoryProps) => {
                   >
                     <div className="flex items-center justify-between mb-1.5">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm">{getOperationIcon(transaction.operationType)}</span>
-                        <span className={`text-xs font-medium capitalize ${getOperationColor(transaction.operationType)}`}>
-                          {transaction.operationType}
+                        <span className="text-sm">{getOperationIcon(tx.tx_type, tx.credits_delta)}</span>
+                        <span className={`text-xs font-medium capitalize ${getOperationColor(tx.tx_type)}`}>
+                          {getOperationLabel(tx)}
                         </span>
                       </div>
                       <div className="flex items-center gap-1">
-                        <ArrowDownLeft className="w-2.5 h-2.5 text-red-400" />
-                        <span className="text-red-400 font-medium text-xs">
-                          -{transaction.creditsSpent}
-                        </span>
+                        {tx.credits_delta > 0 ? (
+                          <>
+                            <ArrowUpRight className="w-2.5 h-2.5 text-green-400" />
+                            <span className="text-green-400 font-medium text-xs">
+                              +{tx.credits_delta}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <ArrowDownLeft className="w-2.5 h-2.5 text-red-400" />
+                            <span className="text-red-400 font-medium text-xs">
+                              {tx.credits_delta}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
-                    
-                    <div className="text-xs text-gray-400 mb-1">
-                      {transaction.description}
-                    </div>
-                    
+
+                    {tx.notes && (
+                      <div className="text-xs text-gray-400 mb-1">
+                        {tx.notes}
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between">
                       <div className="text-xs text-gray-500">
-                        ${transaction.usdEquivalent.toFixed(2)} USD
+                        Balance: {tx.credits_after}
                       </div>
                       <div className="flex items-center gap-1 text-xs text-gray-500">
                         <Clock className="w-2.5 h-2.5" />
-                        {formatTime(transaction.createdAt)}
+                        {formatTime(tx.created_at)}
                       </div>
                     </div>
                   </motion.div>

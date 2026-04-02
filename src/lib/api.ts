@@ -23,6 +23,11 @@ export type Network = 'devnet' | 'testnet' | 'mainnet-beta';
 export interface ContractRequest {
   prompt: string;    // 1–10 000 chars
   network?: Network; // default "devnet"
+  name?: string;
+  chat_history?: ChatMessagePayload[];
+  // When true the pipeline pauses after generate so the frontend can trigger
+  // build / audit / deploy separately via the step endpoints.
+  step_mode?: boolean;
 }
 
 export interface ContractCreated {
@@ -57,6 +62,8 @@ export interface ContractStatus {
   audit_ok: boolean;
   program_id: string | null;
   error: string | null;
+  // Step-mode: next step waiting to be triggered, or null if pipeline running/done.
+  next_step: 'build' | 'audit' | 'deploy' | null;
 }
 
 export interface ContractCode {
@@ -101,6 +108,51 @@ export interface ChatResponse {
   message: string;           // AI reply to display
   ready: boolean;            // true → enriched_prompt is available
   enriched_prompt?: string;  // detailed spec for pipeline generation
+}
+
+// ── Contract List ────────────────────────────────────────────────────────────
+
+export interface ContractSummary {
+  uid: string;
+  name: string;
+  phase: Phase;
+  build_ok: boolean;
+  audit_ok: boolean;
+  program_id: string | null;
+  deploy_network: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ContractListResponse {
+  contracts: ContractSummary[];
+  total: number;
+}
+
+// ── Credit History ──────────────────────────────────────────────────────────
+
+export interface CreditTransactionItem {
+  uid: string;
+  tx_type: 'purchase' | 'deduct' | 'refund';
+  credits_delta: number;
+  credits_before: number;
+  credits_after: number;
+  sol_tx_signature: string | null;
+  pipeline_uid: string | null;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface CreditHistoryResponse {
+  transactions: CreditTransactionItem[];
+  total: number;
+}
+
+export interface CreditRatesResponse {
+  lamports_per_credit: number;
+  credits_per_sol: number;
+  chat_credit_cost: number;
+  pipeline_credit_cost: number;
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────

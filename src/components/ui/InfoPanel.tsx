@@ -48,15 +48,7 @@ export const InfoPanel = ({
   onExportProject
 }: InfoPanelProps) => {
   const [currentNetwork, setCurrentNetwork] = useState<'devnet' | 'mainnet'>('devnet');
-  const [contracts, setContracts] = useState<Contract[]>([
-    {
-      id: '1',
-      address: 'Fg6PaFpoGXkYsidMpWTK6W2BeZ7FEfcYkg476zPFsLnS',
-      name: 'My First Contract',
-      network: 'devnet',
-      createdAt: '2 hours ago'
-    }
-  ]);
+  const [contracts, setContracts] = useState<Contract[]>([]);
 
   const { balance } = useCredits();
 
@@ -68,15 +60,7 @@ export const InfoPanel = ({
     if (onCreateNew) {
       onCreateNew();
     } else {
-      // Fallback to local creation if no callback provided
-      const newContract: Contract = {
-        id: Date.now().toString(),
-        address: generateMockAddress(),
-        name: `Contract ${contracts.length + 1}`,
-        network: currentNetwork,
-        createdAt: 'Just now'
-      };
-      setContracts([newContract, ...contracts]);
+      // No-op — contract creation handled by chat pipeline
     }
   };
 

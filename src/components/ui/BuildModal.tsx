@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect, useCallback } from 'react';
 import { X, Wrench, CheckCircle, AlertCircle, Settings, Code, Rocket } from 'lucide-react';
 import { DancingDotsLoader } from './DancingDotsLoader';
-import { API_BASE_URL, API_ENDPOINTS } from '@/config/api';
+import { API_BASE_URL, ENDPOINTS } from '@/config/api';
+import { apiClient } from '@/services/api';
 
 interface BuildModalProps {
   isOpen: boolean;
@@ -25,17 +26,17 @@ interface BuildStage {
 }
 
 const makeStages = (): BuildStage[] => [
-  { id: 'init', title: 'Initializing build', icon: Settings, status: 'pending' },
-  { id: 'compile', title: 'Compiling contract', icon: Wrench, status: 'pending' },
-  { id: 'verify', title: 'Verifying artifact', icon: Code, status: 'pending' },
-  { id: 'done', title: 'Build complete', icon: Rocket, status: 'pending' },
+  { id: 'init',    title: 'Initializing build',  icon: Settings,     status: 'pending' },
+  { id: 'compile', title: 'Compiling contract',  icon: Wrench,       status: 'pending' },
+  { id: 'verify',  title: 'Verifying artifact',  icon: Code,         status: 'pending' },
+  { id: 'done',    title: 'Build complete',       icon: Rocket,       status: 'pending' },
 ];
 
 export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMessage, bummUid }: BuildModalProps) => {
-  const [stages, setStages] = useState<BuildStage[]>(makeStages());
+  const [stages, setStages]           = useState<BuildStage[]>(makeStages());
   const [buildStatus, setBuildStatus] = useState<'idle' | 'building' | 'success' | 'error'>('idle');
-  const [errorMsg, setErrorMsg] = useState('');
-  const [buildLogs, setBuildLogs] = useState('');
+  const [errorMsg, setErrorMsg]       = useState('');
+  const [buildLogs, setBuildLogs]     = useState('');
 
   const updateStage = useCallback((index: number, status: StageStatus) => {
     setStages(prev => prev.map((s, i) => i === index ? { ...s, status } : s));
@@ -45,7 +46,7 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
     if (!bummUid) {
       setStages(makeStages());
       setBuildStatus('error');
-      setErrorMsg('Cannot start build: backend project ID not found. Please generate the contract first.');
+      setErrorMsg('Cannot start build: project ID not found. Please generate the contract first.');
       updateStage(0, 'error');
       return;
     }
@@ -57,59 +58,57 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
     updateStage(0, 'active');
 
     try {
-      const userId = localStorage.getItem('bumm_user_uid') || '';
-      const textToSend = bummUid;
+      // Trigger the build step — pipeline was paused after generate.
+      await apiClient.triggerBuild(bummUid);
 
-      // 1. Start build — uses API_ENDPOINTS.BUMM_BUILD
-      const startRes = await fetch(`${API_BASE_URL}${API_ENDPOINTS.BUMM_BUILD}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-        body: JSON.stringify({ text: textToSend }),
-      });
+      const token = localStorage.getItem('access_token') || '';
+      const headers: HeadersInit = token
+        ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+        : { 'Content-Type': 'application/json' };
 
-      if (!startRes.ok) {
-        const errData = await startRes.json().catch(() => ({}));
-        if (startRes.status === 402) throw new Error('Insufficient credits for build (25 credits needed)');
-        throw new Error(errData.detail || `Build start failed: ${startRes.status}`);
-      }
-
-      const { uid: buildUid } = await startRes.json();
-      updateStage(0, 'completed');
-      updateStage(1, 'active');
-
-      // 2. Poll status — uses API_ENDPOINTS.BUMM_BUILD_STATUS
+      // Poll status until build finishes (next_step="audit" means build done).
+      const maxAttempts = 180; // 6 min at 2s intervals
       let attempts = 0;
-      const maxAttempts = 90; // 3 min at 2s intervals
+
       while (attempts < maxAttempts) {
         await new Promise(r => setTimeout(r, 2000));
         attempts++;
 
-        const statusRes = await fetch(`${API_BASE_URL}${API_ENDPOINTS.BUMM_BUILD_STATUS}${buildUid}/`, {
-          headers: { 'x-user-id': userId },
-        });
-        if (!statusRes.ok) continue;
+        const res = await fetch(
+          `${API_BASE_URL}${ENDPOINTS.CONTRACT_STATUS(bummUid)}`,
+          { headers },
+        );
+        if (!res.ok) continue;
 
-        const data = await statusRes.json();
+        const data = await res.json();
+        const phase: string = data.phase ?? '';
 
-        if (data.status === 'building') {
-          if (attempts > 10) { updateStage(1, 'completed'); updateStage(2, 'active'); }
-          continue;
+        // Update stage indicators based on phase
+        if (['building', 'build_fixing'].includes(phase)) {
+          updateStage(0, 'completed');
+          updateStage(1, 'active');
         }
 
-        if (data.status === 'built') {
+        // Build is done when pipeline paused before audit (next_step="audit")
+        // or when build_ok=true with no ongoing build phases.
+        const buildDone = data.next_step === 'audit' ||
+          (data.build_ok && !['building', 'build_fixing'].includes(phase));
+
+        if (buildDone) {
           setStages(prev => prev.map(s => ({ ...s, status: 'completed' as StageStatus })));
-          setBuildLogs(data.build_logs || 'Build successful');
+          setBuildLogs('Build successful ✓');
           setBuildStatus('success');
           onAddMessage?.('Build successful! Contract compiled and ready for audit.');
           return;
         }
 
-        if (data.status === 'error') {
-          throw new Error(data.build_logs || data.error || 'Build failed');
+        if (phase === 'failed' || (phase === 'done' && !data.build_ok)) {
+          throw new Error(data.error || 'Build failed — check the pipeline logs for details.');
         }
+        // phases: enriching, generating, learning, not_started — keep waiting
       }
 
-      throw new Error('Build timed out after 3 minutes');
+      throw new Error('Build timed out after 6 minutes');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown build error';
       setErrorMsg(msg.substring(0, 500));
@@ -117,7 +116,7 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
       setStages(prev => prev.map(s => s.status === 'active' ? { ...s, status: 'error' as StageStatus } : s));
       onAddMessage?.(`Build failed: ${msg.substring(0, 200)}`);
     }
-  }, [bummUid, contractCode, onAddMessage, updateStage]);
+  }, [bummUid, onAddMessage, updateStage]);
 
   useEffect(() => {
     if (isOpen) startBuild();
@@ -127,9 +126,9 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
     const Icon = stage.icon;
     switch (stage.status) {
       case 'completed': return <CheckCircle className="w-4 h-4 text-green-400" />;
-      case 'active': return <DancingDotsLoader />;
-      case 'error': return <AlertCircle className="w-4 h-4 text-red-400" />;
-      default: return <Icon className="w-4 h-4 text-gray-500" />;
+      case 'active':    return <DancingDotsLoader />;
+      case 'error':     return <AlertCircle className="w-4 h-4 text-red-400" />;
+      default:          return <Icon className="w-4 h-4 text-gray-500" />;
     }
   };
 
@@ -161,7 +160,7 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
                       <DancingDotsLoader />
                       <span className="text-white font-medium text-sm">Compiling with Anchor CLI...</span>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">This may take 1-3 minutes</p>
+                    <p className="text-xs text-gray-500 mt-1">This may take 1–6 minutes</p>
                   </div>
                   <div className="space-y-2">
                     {stages.map((stage) => (
@@ -205,7 +204,7 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
                   <div className="flex gap-2">
                     <button onClick={startBuild}
                       className="flex-1 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm">
-                      Retry Build
+                      Retry
                     </button>
                     <button onClick={onClose}
                       className="flex-1 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-sm">
