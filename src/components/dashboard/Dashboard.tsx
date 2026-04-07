@@ -917,11 +917,40 @@ export default function Dashboard() {
     if (step === 'build') {
       const attempts = contract.status.build_attempt ?? 1;
       const fixed = Math.max(0, attempts - 1);
-      addAIMessage(
-        fixed > 0
-          ? `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Auto-fixed ${fixed} compile error${fixed > 1 ? 's' : ''} along the way — the contract now compiles cleanly.`
-          : `✅ **Build succeeded** on the first attempt. The contract compiles cleanly with no errors.`
-      );
+      // Fetch detailed fix list from /fixes endpoint.
+      (async () => {
+        try {
+          const token = localStorage.getItem('bumm_access_token');
+          const res = await fetch(`/api/backend/contracts/${uid}/fixes`, {
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+          });
+          if (res.ok) {
+            const data: {
+              fixes: Array<{ error_pattern: string; fix_description: string; source: string; was_successful: boolean | null }>;
+            } = await res.json();
+            const fixes = (data.fixes || []).filter(f => f.was_successful !== false);
+            if (fixes.length > 0) {
+              const list = fixes.slice(0, 6).map((f, i) =>
+                `${i + 1}. ${f.fix_description}${f.source === 'knowledge_base' ? ' *(from KB)*' : ''}`
+              ).join('\n');
+              addAIMessage(
+                `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Auto-applied **${fixes.length}** fix${fixes.length === 1 ? '' : 'es'}:\n\n${list}${fixes.length > 6 ? `\n…and ${fixes.length - 6} more.` : ''}`
+              );
+              return;
+            }
+          }
+        } catch {
+          // fall through to generic message
+        }
+        addAIMessage(
+          fixed > 0
+            ? `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Auto-fixed ${fixed} compile error${fixed > 1 ? 's' : ''} along the way — the contract now compiles cleanly.`
+            : `✅ **Build succeeded** on the first attempt. The contract compiles cleanly with no errors.`
+        );
+      })();
     } else if (step === 'audit' && uid) {
       // Fetch full audit report + vulns to surface as chat message.
       (async () => {
@@ -956,13 +985,29 @@ export default function Dashboard() {
       );
     }
 
+    // Always clear the phase so the editor animation resets between steps.
+    // Without this the BuildStages animation stays rendered after build finishes,
+    // blocking AuditStages from appearing when the user clicks Audit.
+    setPipelinePhase(null);
     setPipelineStepRunning('idle');
     triggeredStepRef.current = null;
 
-    // Only tear down the WS subscription after deploy completes; for build →
-    // audit the next step button will reuse the same connection.
+    // After build: re-fetch code from backend so the editor shows the
+    // auto-fixed version (build node may have patched compile errors in the source).
+    if (step === 'build' && uid) {
+      apiClient.getContractCode(uid).then(result => {
+        if (result.code) {
+          setCurrentProject(prev =>
+            prev && prev.uid === uid ? { ...prev, code: result.code } : prev,
+          );
+          setGeneratedCode({ projectUid: uid, code: result.code });
+        }
+      }).catch(() => {});
+    }
+
+    // Tear down the WS subscription only after deploy (for build → audit →
+    // deploy the same connection is reused).
     if (step === 'deploy') {
-      setPipelinePhase(null);
       setActiveContractUid(null);
     }
   }, [contract.status, pipelineStepRunning, currentProject, activeContractUid, updateProjects]);

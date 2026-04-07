@@ -48,18 +48,32 @@ export async function refresh(refreshToken: string): Promise<AuthTokens> {
   return tokens;
 }
 
-/** Read refresh token from localStorage and silently refresh. Returns true on success. */
+// Singleton in-flight promise — prevents concurrent refresh calls from consuming
+// the refresh token twice (which causes a 401 on the second attempt).
+let _refreshPromise: Promise<boolean> | null = null;
+
+/** Read refresh token from localStorage and silently refresh. Returns true on success.
+ *  Concurrent calls share the same in-flight request instead of firing separately. */
 export async function tryRefresh(): Promise<boolean> {
   if (typeof window === 'undefined') return false;
   const rt = localStorage.getItem('refresh_token');
   if (!rt) return false;
-  try {
-    await refresh(rt);
-    return true;
-  } catch {
-    clearTokens();
-    return false;
-  }
+
+  if (_refreshPromise) return _refreshPromise;
+
+  _refreshPromise = (async () => {
+    try {
+      await refresh(rt);
+      return true;
+    } catch {
+      clearTokens();
+      return false;
+    } finally {
+      _refreshPromise = null;
+    }
+  })();
+
+  return _refreshPromise;
 }
 
 // ── Logout ────────────────────────────────────────────────────────────────────
