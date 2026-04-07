@@ -328,4 +328,4 @@ next-env.d.ts
 .eslintcache
 
 # Stylelint cache
-.stylelintcache
+.stylelintcache.claude/

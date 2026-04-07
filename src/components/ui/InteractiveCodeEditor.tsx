@@ -42,6 +42,7 @@ export const InteractiveCodeEditor = ({
   isAutoDemo = false,
   useRealApi = false
 }: InteractiveCodeEditorProps) => {
+  const addAIMessage = onAddAIMessage ?? (() => {});
   const [code, setCode] = useState(initialCode);
   const [isEditing, setIsEditing] = useState(false);
   const [source, setSource] = useState<CodeSource>('empty');
@@ -113,7 +114,7 @@ export const InteractiveCodeEditor = ({
       <CodeGenerationStages
         isGenerating={isGenerating}
         onComplete={handleGenerationComplete}
-        onAddAIMessage={onAddAIMessage}
+        onAddAIMessage={addAIMessage}
         context={context || ''}
         waitForExternalCode={useRealApi}
       />
@@ -125,7 +126,7 @@ export const InteractiveCodeEditor = ({
       <BuildStages
         isBuilding={isBuilding}
         onComplete={() => {}}
-        onAddAIMessage={onAddAIMessage}
+        onAddAIMessage={addAIMessage}
       />
     );
   }
@@ -135,7 +136,7 @@ export const InteractiveCodeEditor = ({
       <AuditStages
         isAuditing={isAuditing}
         onComplete={() => {}}
-        onAddAIMessage={onAddAIMessage}
+        onAddAIMessage={addAIMessage}
       />
     );
   }
@@ -145,7 +146,7 @@ export const InteractiveCodeEditor = ({
       <DeployStages
         isDeploying={isDeploying}
         onComplete={() => {}}
-        onAddAIMessage={onAddAIMessage}
+        onAddAIMessage={addAIMessage}
       />
     );
   }

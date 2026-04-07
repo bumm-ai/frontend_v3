@@ -1,8 +1,9 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Bot, User as UserIcon, Code } from 'lucide-react';
+import { Send, Bot, User as UserIcon, Code, ClipboardPaste } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { HeaderWalletButton } from '../ui/HeaderWalletButton';
 import { HeaderCreditsButton } from '../ui/HeaderCreditsButton';
 import { Navigation } from '../ui/Navigation';
@@ -10,9 +11,6 @@ import { InfoPanel } from '../ui/InfoPanel';
 import { DashboardFooter } from '../ui/DashboardFooter';
 import { InteractiveCodeEditor } from '../ui/InteractiveCodeEditor';
 import { SmartActionButton } from '../ui/SmartActionButton';
-import { DeployModal } from '../ui/DeployModal';
-import { BuildModal } from '../ui/BuildModal';
-import { AuditModal } from '../ui/AuditModal';
 import { ChatMessage, CodeSource, ActionButtonState, Project, User } from '@/types/dashboard';
 import { isGenerationCommand } from '@/utils/generationCommands';
 
@@ -20,11 +18,12 @@ interface ChatScreenProps {
   messages: ChatMessage[];
   onSendMessage: (message: string, currentContractCode?: string) => void;
   onAddAIMessage: (message: string) => void;
-  onBuild: (code: string) => void;
-  onDeploy: (code: string) => Promise<string | undefined>;
   onGenerateContract?: (description: string) => Promise<Project>;
   onCreateProject?: (name: string) => Promise<Project>;
   onCreateNew?: () => void;
+  /** Opens the paste-code modal (handled at Dashboard level).
+   *  Pass initialCode to pre-fill the editor (e.g. when user already pasted in ChatScreen). */
+  onOpenPasteModal?: (initialCode?: string) => void;
   onSelectProject?: (project: Project) => void;
   onRenameProject?: (project: Project, newName: string) => void;
   onDeleteProject?: (project: Project) => void;
@@ -44,17 +43,19 @@ interface ChatScreenProps {
   onGeneratedCodeApplied?: () => void;
   generationAttemptFailed?: number;
   pipelinePhase?: string | null;
+  onStartStep?: (step: 'build' | 'audit' | 'deploy') => Promise<void>;
+  pipelineStepRunning?: 'idle' | 'triggering' | 'running' | 'error';
+  pipelineStepError?: string | null;
 }
 
 export default function ChatScreen({ 
   messages, 
   onSendMessage, 
   onAddAIMessage,
-  onBuild, 
-  onDeploy, 
   onGenerateContract,
   onCreateProject,
   onCreateNew,
+  onOpenPasteModal,
   onSelectProject,
   onRenameProject,
   onDeleteProject,
@@ -74,7 +75,11 @@ export default function ChatScreen({
   onGeneratedCodeApplied,
   generationAttemptFailed = 0,
   pipelinePhase,
+  onStartStep,
+  pipelineStepRunning = 'idle',
+  pipelineStepError,
 }: ChatScreenProps) {
+  const router = useRouter();
   const [inputValue, setInputValue] = useState('');
   const [mobileActiveTab, setMobileActiveTab] = useState<'chat' | 'code' | 'network'>('chat');
   const messagesEndRefDesktop = useRef<HTMLDivElement>(null);
@@ -108,42 +113,20 @@ export default function ChatScreen({
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
-  const [contractCode, setContractCode] = useState(() => {
-    // Load contract code for current project from localStorage
-    if (typeof window !== 'undefined' && currentProject) {
-      try {
-        const savedCode = localStorage.getItem(`bumm_contract_code_${currentProject.uid}`);
-        return savedCode || '';
-      } catch (err) {
-        console.warn('Failed to load contract code from localStorage:', err);
-        return '';
-      }
-    }
-    return '';
-  });
-  const [actionButtonState, setActionButtonState] = useState<ActionButtonState>(() => {
-    // Load button state from localStorage
-    if (typeof window !== 'undefined') {
-      try {
-        const savedState = localStorage.getItem('bumm_action_button_state');
-        return savedState ? savedState as ActionButtonState : 'inactive';
-      } catch (err) {
-        console.warn('Failed to load action button state from localStorage:', err);
-        return 'inactive';
-      }
-    }
-    return 'inactive';
-  });
-  const [isDeployModalOpen, setIsDeployModalOpen] = useState(false);
-  const [isBuildModalOpen, setIsBuildModalOpen] = useState(false);
-  const [isAuditModalOpen, setIsAuditModalOpen] = useState(false);
+  const [contractCode, setContractCode] = useState('');
+  const [actionButtonState, setActionButtonState] = useState<ActionButtonState>('inactive');
   const [isGenerating, setIsGenerating] = useState(false);
 
   // Derive animation flags from the live pipeline phase coming from Dashboard
   const isPipelineGenerating = pipelinePhase === 'generating' || pipelinePhase === 'enriching';
-  const isPipelineBuilding   = pipelinePhase === 'building' || pipelinePhase === 'build_fixing';
-  const isPipelineAuditing   = pipelinePhase === 'auditing_static' || pipelinePhase === 'auditing_llm' || pipelinePhase === 'audit_fixing';
-  const isPipelineDeploying  = pipelinePhase === 'deploying';
+  const [pendingStep, setPendingStep] = useState<'build' | 'audit' | 'deploy' | null>(null);
+  const phaseBuilding  = pipelinePhase === 'building' || pipelinePhase === 'build_fixing';
+  const phaseAuditing  = pipelinePhase === 'auditing_static' || pipelinePhase === 'auditing_llm' || pipelinePhase === 'audit_fixing';
+  const phaseDeploying = pipelinePhase === 'deploying';
+  const stepActive = pendingStep !== null;
+  const isPipelineBuilding   = phaseBuilding  || (stepActive && pendingStep === 'build');
+  const isPipelineAuditing   = phaseAuditing  || (stepActive && pendingStep === 'audit');
+  const isPipelineDeploying  = phaseDeploying || (stepActive && pendingStep === 'deploy');
   const [isContractDeployed, setIsContractDeployed] = useState(() => {
     if (typeof window !== 'undefined' && currentProject) {
       try {
@@ -203,44 +186,44 @@ export default function ChatScreen({
 
   // Load all project states when switching projects
   useEffect(() => {
-    if (typeof window !== 'undefined' && currentProject) {
+    if (currentProject) {
       try {
-        // Load contract code
-        const savedCode = localStorage.getItem(`bumm_contract_code_${currentProject.uid}`);
-        setContractCode(savedCode || '');
-        
-        // Load deployment state
-        const savedDeployed = localStorage.getItem(`bumm_contract_deployed_${currentProject.uid}`);
-        setIsContractDeployed(savedDeployed === 'true');
-        
-        // Load contract address
-        const savedAddress = localStorage.getItem(`bumm_deployed_contract_address_${currentProject.uid}`);
-        setDeployedContractAddress(savedAddress || undefined);
-        
-        // Load dates
-        const savedDeploymentDate = localStorage.getItem(`bumm_deployment_date_${currentProject.uid}`);
-        setDeploymentDate(savedDeploymentDate ? new Date(savedDeploymentDate) : undefined);
-        
-        const savedUpdateDate = localStorage.getItem(`bumm_last_update_date_${currentProject.uid}`);
-        setLastUpdateDate(savedUpdateDate ? new Date(savedUpdateDate) : undefined);
-        
-        // Update button state: per-project saved state takes priority over heuristic
-        const savedButtonState = localStorage.getItem(`bumm_action_button_state_${currentProject.uid}`);
-        const validStates: ActionButtonState[] = ['build', 'audit', 'publish', 'upgrade', 'review', 'inactive'];
-        if (savedButtonState && validStates.includes(savedButtonState as ActionButtonState)) {
-          setActionButtonState(savedButtonState as ActionButtonState);
-        } else if (savedCode && savedCode.trim()) {
-          if (savedDeployed === 'true') {
-            setActionButtonState('upgrade');
-          } else {
-            setActionButtonState('review');
-          }
+        // Code: prefer project.code (freshly fetched from API by Dashboard),
+        // fall back to localStorage cache (preserves unsaved user edits)
+        const apiCode = currentProject.code || '';
+        const cachedCode = typeof window !== 'undefined'
+          ? localStorage.getItem(`bumm_contract_code_${currentProject.uid}`) || ''
+          : '';
+        const resolvedCode = apiCode || cachedCode;
+        setContractCode(resolvedCode);
+
+        // Deployment state from project object (source of truth)
+        const deployed = currentProject.isDeployed ?? false;
+        setIsContractDeployed(deployed);
+        setDeployedContractAddress(currentProject.contractAddress ?? undefined);
+
+        // Dates from localStorage (UI-only, no backend equivalent)
+        if (typeof window !== 'undefined') {
+          const savedDeploymentDate = localStorage.getItem(`bumm_deployment_date_${currentProject.uid}`);
+          setDeploymentDate(savedDeploymentDate ? new Date(savedDeploymentDate) : undefined);
+          const savedUpdateDate = localStorage.getItem(`bumm_last_update_date_${currentProject.uid}`);
+          setLastUpdateDate(savedUpdateDate ? new Date(savedUpdateDate) : undefined);
+        }
+
+        // Derive button state from project status — no localStorage needed
+        if (deployed || currentProject.status === 'deployed') {
+          setActionButtonState('upgrade');
+        } else if (currentProject.status === 'audited') {
+          setActionButtonState('publish');
+        } else if (currentProject.status === 'built') {
+          setActionButtonState('audit');
+        } else if (resolvedCode.trim()) {
+          setActionButtonState('build');
         } else {
           setActionButtonState('inactive');
         }
       } catch (err) {
         console.warn('Failed to load project states:', err);
-        // Reset all states on error
         setContractCode('');
         setActionButtonState('inactive');
         setIsContractDeployed(false);
@@ -248,8 +231,8 @@ export default function ChatScreen({
         setDeploymentDate(undefined);
         setLastUpdateDate(undefined);
       }
-    } else if (!currentProject) {
-      // If no project, clear all states
+    } else {
+      // No project selected — clear all states
       setContractCode('');
       setActionButtonState('inactive');
       setIsContractDeployed(false);
@@ -259,19 +242,6 @@ export default function ChatScreen({
     }
   }, [currentProject]);
 
-  // Save action button state to localStorage (global + per-project)
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        localStorage.setItem('bumm_action_button_state', actionButtonState);
-        if (currentProject) {
-          localStorage.setItem(`bumm_action_button_state_${currentProject.uid}`, actionButtonState);
-        }
-      } catch (err) {
-        console.warn('Failed to save action button state to localStorage:', err);
-      }
-    }
-  }, [actionButtonState, currentProject]);
 
   // Save deployment state to localStorage
   useEffect(() => {
@@ -385,75 +355,68 @@ export default function ChatScreen({
   };
 
   const handleActionClick = async () => {
-    if (actionButtonState === 'review') {
-      // Code is ready for building — open Build modal directly (no demo simulation)
-      setIsBuildModalOpen(true);
-    } else if (actionButtonState === 'build') {
-      // Open build modal
-      setIsBuildModalOpen(true);
-    } else if (actionButtonState === 'audit') {
-      // Open audit modal
-      setIsAuditModalOpen(true);
-    } else if (actionButtonState === 'publish') {
-      // Open deploy modal
-      setIsDeployModalOpen(true);
-    } else if (actionButtonState === 'upgrade') {
-      // Contract upgrade - update lastUpdateDate
-      setLastUpdateDate(new Date());
-      setIsDeployModalOpen(true);
+    const bummUid = currentProject?.bummUid;
+
+    // If code exists but no project yet — open paste modal to create one first.
+    if (!bummUid && contractCode.trim() && onOpenPasteModal) {
+      onOpenPasteModal(contractCode);
+      return;
+    }
+
+    // When a real backend project exists, navigate to its step-mode page for
+    // Build → Audit → Deploy (the /contracts/[uid] page handles all three steps inline).
+    if (bummUid && onStartStep) {
+      const step: 'build' | 'audit' | 'deploy' | null =
+        actionButtonState === 'build'    ? 'build'  :
+        actionButtonState === 'review'   ? 'audit'  :
+        actionButtonState === 'audit'    ? 'audit'  :
+        actionButtonState === 'publish'  ? 'deploy' :
+        actionButtonState === 'upgrade'  ? 'deploy' : null;
+      if (step) {
+        setPendingStep(step);
+        try { await onStartStep(step); } catch {}
+      }
+      return;
     }
   };
 
-  const handleBuildComplete = () => {
-    // After successful build show Audit button and open Audit modal (do NOT start another build)
-    setActionButtonState('audit');
-    setIsBuildModalOpen(false);
-    setIsAuditModalOpen(true);
-  };
+  // Clear pendingStep once the backend run returns to idle (success or error).
+  useEffect(() => {
+    if (pipelineStepRunning === 'idle' && pendingStep) setPendingStep(null);
+  }, [pipelineStepRunning, pendingStep]);
 
-  const handleAuditClick = () => {
-    setIsAuditModalOpen(true);
-  };
+  // Advance button state based on backend project status updates.
+  useEffect(() => {
+    if (!currentProject) return;
+    if (currentProject.status === 'deployed')      setActionButtonState('upgrade');
+    else if (currentProject.status === 'audited')  setActionButtonState('publish');
+    else if (currentProject.status === 'built')    setActionButtonState('audit');
+  }, [currentProject?.status]);
 
-  const handleAuditComplete = (applyPatches: boolean) => {
-    setIsAuditModalOpen(false);
-    
-    if (applyPatches) {
-      // If applying patches, return to build for rebuild
-      setActionButtonState('build');
-      onAddAIMessage('🔧 Security patches applied! Please rebuild the contract.');
-    } else {
-      // If not applying patches, go to publish
-    if (isContractDeployed && !contractIsFrozen) {
-      setActionButtonState('upgrade');
-    } else {
-      setActionButtonState('publish');
-    }
-      onAddAIMessage('Audit completed! Contract is ready for deployment.');
-    }
-  };
+  // While a pipeline step is running, override the button into its loader state.
+  const effectiveButtonState: ActionButtonState = (() => {
+    const running = pipelineStepRunning === 'running' || pipelineStepRunning === 'triggering';
+    if (!running) return actionButtonState;
+    if (isPipelineDeploying || actionButtonState === 'publish' || actionButtonState === 'upgrade') return 'publishing';
+    if (isPipelineAuditing || actionButtonState === 'audit') return 'auditing';
+    return 'building';
+  })();
 
-  const handleBuildModalClose = () => {
-    setIsBuildModalOpen(false);
+  const PHASE_LABELS: Record<string, string> = {
+    generating: 'Generating code…',
+    enriching: 'Enriching prompt…',
+    building: '🔧 Compiling with Anchor…',
+    build_fixing: '🔧 Auto-fixing build errors…',
+    auditing_static: '🔍 Running static audit…',
+    auditing_llm: '🔍 LLM security review…',
+    audit_fixing: '🔍 Auto-fixing audit findings…',
+    deploying: '🚀 Deploying to Solana…',
   };
-
-  const handleDeployComplete = (address?: string) => {
-    const now = new Date();
-    setIsContractDeployed(true);
-    setDeployedContractAddress(address ?? '');
-    setDeploymentDate(now);
-    setLastUpdateDate(now);
-    setActionButtonState('upgrade');
-    setIsDeployModalOpen(false);
-  };
+  const phaseLabel = pipelinePhase ? PHASE_LABELS[pipelinePhase] : null;
+  const showInlineStatus = pipelineStepRunning !== 'idle' || !!pipelineStepError;
 
   const handleContractFreeze = () => {
     setContractIsFrozen(true);
-    setActionButtonState('publish'); // After freeze return to Publish for new contracts
-  };
-
-  const handleDeployModalClose = () => {
-    setIsDeployModalOpen(false);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -548,9 +511,21 @@ export default function ChatScreen({
           <div className="w-[calc(40%-1px)] flex flex-col bg-[#0C0C0C] border border-[#333] rounded">
         {/* Fixed Header */}
             <div className="p-3 pb-0 flex-shrink-0">
-          <div className="flex items-center gap-1.5 text-white text-sm font-semibold mb-2">
-            <Bot className="w-4 h-4 text-orange-500" />
-            AI Agent Chat
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5 text-white text-sm font-semibold">
+              <Bot className="w-4 h-4 text-orange-500" />
+              AI Agent Chat
+            </div>
+            {onOpenPasteModal && (
+              <button
+                onClick={() => onOpenPasteModal()}
+                title="Paste existing Anchor/Rust code"
+                className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-gray-500 hover:text-orange-400 hover:bg-orange-500/10 border border-transparent hover:border-orange-500/20 transition-all"
+              >
+                <ClipboardPaste className="w-3 h-3" />
+                Paste code
+              </button>
+            )}
           </div>
         </div>
         
@@ -679,10 +654,21 @@ export default function ChatScreen({
               )}
             </div>
             
+            {/* Inline pipeline status */}
+            {showInlineStatus && (
+              <div className="ml-4 text-xs">
+                {pipelineStepError ? (
+                  <span className="text-red-400">{pipelineStepError}</span>
+                ) : (
+                  <span className="text-orange-300">{phaseLabel ?? 'Working…'}</span>
+                )}
+              </div>
+            )}
+
             {/* Smart Action Button */}
             <div className="ml-4">
               <SmartActionButton 
-                state={actionButtonState}
+                state={effectiveButtonState}
                 onClick={handleActionClick}
                 disabled={isBuilding}
                 isDeployed={isContractDeployed}
@@ -723,9 +709,20 @@ export default function ChatScreen({
           }`}>
             {/* Fixed Header */}
             <div className="p-2 pb-0 flex-shrink-0">
-              <div className="flex items-center gap-1.5 text-white text-sm font-semibold mb-2">
-                <Bot className="w-4 h-4 text-orange-500" />
-                AI Agent Chat
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1.5 text-white text-sm font-semibold">
+                  <Bot className="w-4 h-4 text-orange-500" />
+                  AI Agent Chat
+                </div>
+                {onOpenPasteModal && (
+                  <button
+                    onClick={() => onOpenPasteModal()}
+                    className="flex items-center gap-1 px-2 py-1 rounded text-xs text-gray-500 hover:text-orange-400 hover:bg-orange-500/10 transition-all"
+                  >
+                    <ClipboardPaste className="w-3 h-3" />
+                    Paste
+                  </button>
+                )}
               </div>
             </div>
             
@@ -811,10 +808,13 @@ export default function ChatScreen({
             
             {/* Interactive Code Area */}
             <div className="flex-1 p-2 min-h-0">
-              <InteractiveCodeEditor 
+              <InteractiveCodeEditor
                 initialCode={contractCode}
                 onCodeChange={handleCodeChange}
                 isGenerating={isGenerating}
+                isBuilding={isPipelineBuilding}
+                isAuditing={isPipelineAuditing}
+                isDeploying={isPipelineDeploying}
                 onGenerationComplete={handleGenerationComplete}
                 onAddAIMessage={onAddAIMessage}
                 placeholder="Paste your smart contract here or chat with AI to generate one..."
@@ -839,7 +839,7 @@ export default function ChatScreen({
                 
                 <div className="ml-4">
                   <SmartActionButton 
-                    state={actionButtonState}
+                    state={effectiveButtonState}
                     onClick={handleActionClick}
                     disabled={isBuilding}
                     isDeployed={isContractDeployed}
@@ -876,38 +876,6 @@ export default function ChatScreen({
       </div>
       
       <DashboardFooter />
-
-      {/* Build Modal */}
-      <BuildModal 
-        isOpen={isBuildModalOpen}
-        onClose={handleBuildModalClose}
-        onComplete={handleBuildComplete}
-        contractCode={contractCode}
-        onAddMessage={onAddAIMessage}
-        bummUid={currentProject?.bummUid}
-      />
-
-      {/* Deploy Modal */}
-      <DeployModal 
-        isOpen={isDeployModalOpen}
-        onClose={handleDeployModalClose}
-        onDeploy={onDeploy}
-        onComplete={handleDeployComplete}
-        contractCode={contractCode}
-        network="devnet"
-        bummUid={currentProject?.bummUid}
-      />
-
-      {/* Audit Modal */}
-      <AuditModal 
-        isOpen={isAuditModalOpen}
-        onClose={() => setIsAuditModalOpen(false)}
-        onComplete={handleAuditComplete}
-        contractCode={contractCode}
-        onAddMessage={onAddAIMessage}
-        messages={messages.map(msg => ({ ...msg }))}
-        bummUid={currentProject?.bummUid}
-      />
     </motion.div>
   );
 }

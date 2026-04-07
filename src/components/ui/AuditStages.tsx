@@ -76,6 +76,13 @@ export const AuditStages = ({ isAuditing, onComplete, onAddAIMessage }: AuditSta
   const [completedStages, setCompletedStages] = useState<string[]>([]);
 
   useEffect(() => {
+    if (!isAuditing && completedStages.length > 0) {
+      setCompletedStages(auditStages.map(s => s.id));
+      onComplete();
+    }
+  }, [isAuditing]);
+
+  useEffect(() => {
     if (!isAuditing) {
       setCurrentStageIndex(0);
       setCompletedStages([]);
@@ -83,20 +90,12 @@ export const AuditStages = ({ isAuditing, onComplete, onAddAIMessage }: AuditSta
     }
 
     let timeoutId: NodeJS.Timeout;
-    
-    if (currentStageIndex < auditStages.length) {
+
+    if (currentStageIndex < auditStages.length - 1) {
       const currentStage = auditStages[currentStageIndex];
-      
       timeoutId = setTimeout(() => {
         setCompletedStages(prev => [...prev, currentStage.id]);
-        
-        if (currentStageIndex === auditStages.length - 1) {
-          setTimeout(() => {
-            onComplete();
-          }, 500);
-        } else {
-          setCurrentStageIndex(prev => prev + 1);
-        }
+        setCurrentStageIndex(prev => prev + 1);
       }, currentStage.duration);
     }
 

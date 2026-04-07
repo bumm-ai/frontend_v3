@@ -14,6 +14,7 @@ import type {
   ContractListResponse,
   CreditHistoryResponse,
   CreditRatesResponse,
+  DeployEstimate,
   PurchaseResponse,
 } from '@/lib/api';
 
@@ -140,8 +141,13 @@ export class ApiClient {
     return apiFetch(ENDPOINTS.CONTRACT_AUDIT(uid));
   }
 
-  async listContracts(limit = 50, offset = 0): Promise<ContractListResponse> {
-    return apiFetch(`${ENDPOINTS.CONTRACTS}?limit=${limit}&offset=${offset}`);
+  async listContracts(limit = 50, offset = 0, hasCode = true): Promise<ContractListResponse> {
+    const params = new URLSearchParams({
+      limit: String(limit),
+      offset: String(offset),
+      has_code: String(hasCode),
+    });
+    return apiFetch(`${ENDPOINTS.CONTRACTS}?${params}`);
   }
 
   async updateContract(uid: string, data: { name?: string }): Promise<{ uid: string; name: string }> {
@@ -170,7 +176,12 @@ export class ApiClient {
   }
 
   async triggerDeploy(uid: string): Promise<{ status: string; uid: string }> {
-    return apiFetch(ENDPOINTS.CONTRACT_DEPLOY_STEP(uid), { method: 'POST' });
+    // confirm=true is required by the backend deploy endpoint to prevent accidental deploys
+    return apiFetch(`${ENDPOINTS.CONTRACT_DEPLOY_STEP(uid)}?confirm=true`, { method: 'POST' });
+  }
+
+  async getDeployEstimate(uid: string): Promise<DeployEstimate> {
+    return apiFetch(ENDPOINTS.CONTRACT_DEPLOY_ESTIMATE(uid));
   }
 
   async saveContractChat(uid: string, messages: Array<Record<string, unknown>>): Promise<{ status: string; message_count: number }> {

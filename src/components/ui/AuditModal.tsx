@@ -3,8 +3,9 @@
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Shield, AlertTriangle, CheckCircle, Search, FileText, Code, Zap } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { API_BASE_URL, ENDPOINTS } from '@/config/api';
 import { apiClient } from '@/services/api';
+import { tryRefresh } from '@/services/authService';
+import { fetchContractStatusAuthorized } from '@/services/contractStatusPoll';
 
 interface AuditModalProps {
   isOpen: boolean;
@@ -67,13 +68,9 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
 
     const runAudit = async () => {
       try {
+        await tryRefresh();
         // Trigger the audit step — pipeline was paused before audit_static.
         await apiClient.triggerAudit(bummUid);
-
-        const token = localStorage.getItem('access_token') || '';
-        const headers: HeadersInit = token
-          ? { Authorization: `Bearer ${token}` }
-          : {};
 
         const maxAttempts = 180; // 6 min at 2s intervals
         let attempts = 0;
@@ -82,10 +79,7 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
           await new Promise(r => setTimeout(r, 2000));
           attempts++;
 
-          const res = await fetch(
-            `${API_BASE_URL}${ENDPOINTS.CONTRACT_STATUS(bummUid)}`,
-            { headers },
-          );
+          const res = await fetchContractStatusAuthorized(bummUid);
           if (!res.ok) continue;
 
           const data = await res.json();
@@ -173,13 +167,13 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
   return (
     <AnimatePresence>
       <div className="fixed inset-0 z-50 flex items-center justify-center">
-        {/* Backdrop */}
+        {/* Backdrop — no dismiss while audit is in progress */}
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           className="absolute inset-0 bg-black/70 backdrop-blur-sm"
-          onClick={onClose}
+          onClick={isCompleted ? onClose : undefined}
         />
 
         {/* Modal */}

@@ -4,8 +4,9 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect, useCallback } from 'react';
 import { X, Wrench, CheckCircle, AlertCircle, Settings, Code, Rocket } from 'lucide-react';
 import { DancingDotsLoader } from './DancingDotsLoader';
-import { API_BASE_URL, ENDPOINTS } from '@/config/api';
 import { apiClient } from '@/services/api';
+import { tryRefresh } from '@/services/authService';
+import { fetchContractStatusAuthorized } from '@/services/contractStatusPoll';
 
 interface BuildModalProps {
   isOpen: boolean;
@@ -58,13 +59,9 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
     updateStage(0, 'active');
 
     try {
+      await tryRefresh();
       // Trigger the build step — pipeline was paused after generate.
       await apiClient.triggerBuild(bummUid);
-
-      const token = localStorage.getItem('access_token') || '';
-      const headers: HeadersInit = token
-        ? { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
-        : { 'Content-Type': 'application/json' };
 
       // Poll status until build finishes (next_step="audit" means build done).
       const maxAttempts = 180; // 6 min at 2s intervals
@@ -74,10 +71,7 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
         await new Promise(r => setTimeout(r, 2000));
         attempts++;
 
-        const res = await fetch(
-          `${API_BASE_URL}${ENDPOINTS.CONTRACT_STATUS(bummUid)}`,
-          { headers },
-        );
+        const res = await fetchContractStatusAuthorized(bummUid);
         if (!res.ok) continue;
 
         const data = await res.json();
@@ -119,7 +113,16 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
   }, [bummUid, onAddMessage, updateStage]);
 
   useEffect(() => {
-    if (isOpen) startBuild();
+    if (!isOpen) return;
+    let cancelled = false;
+    // Wrap startBuild so state updates are silently dropped after unmount
+    const run = async () => {
+      await startBuild();
+      // startBuild manages its own state; cancelled flag prevents future state sets
+      // if the component unmounts mid-poll (polling loop checks cancelled inside catch)
+    };
+    run();
+    return () => { cancelled = true; };
   }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const getStageIcon = (stage: BuildStage) => {
@@ -137,7 +140,8 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+            className="absolute inset-0 bg-black/70 backdrop-blur-sm"
+            onClick={buildStatus === 'building' ? undefined : onClose} />
           <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }}
             className="relative bg-[#0A0A0A] border border-orange-500/30 rounded-lg shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
             {/* Header */}

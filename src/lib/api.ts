@@ -21,7 +21,10 @@ export interface AuthTokens {
 export type Network = 'devnet' | 'testnet' | 'mainnet-beta';
 
 export interface ContractRequest {
-  prompt: string;    // 1–10 000 chars
+  /** Generate-from-prompt flow: natural language description (required unless code is set). */
+  prompt?: string;
+  /** Paste-existing-code flow: verbatim Anchor/Rust source. Skips enrich → generate. */
+  code?: string;
   network?: Network; // default "devnet"
   name?: string;
   chat_history?: ChatMessagePayload[];
@@ -41,6 +44,7 @@ export type Phase =
   | 'pending'
   | 'enriching'
   | 'generating'
+  | 'generated'      // paste-mode: code exists, paused before build
   | 'building'
   | 'build_fixing'
   | 'auditing_static'
@@ -153,6 +157,20 @@ export interface CreditRatesResponse {
   credits_per_sol: number;
   chat_credit_cost: number;
   pipeline_credit_cost: number;
+}
+
+// ── Deploy Estimate ──────────────────────────────────────────────────────────
+
+export interface DeployEstimate {
+  so_size_bytes: number | null;
+  estimated_sol: number;
+  estimated_credits: number;
+  user_balance_credits: number;
+  user_sol_balance: number | null;
+  sufficient: boolean;
+  missing_credits: number;
+  network: string;
+  note: string | null;
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────

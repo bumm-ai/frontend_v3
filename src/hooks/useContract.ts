@@ -125,6 +125,35 @@ export function useContract(uid: string | null) {
     [],
   );
 
+  // ── createPasteContract ───────────────────────────────────────────────────────
+  const createPasteContract = useCallback(
+    async (
+      code: string,
+      network: Network = 'devnet',
+      opts?: { name?: string },
+    ): Promise<ContractCreated> => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const result = await apiClient.createContract({
+          code,
+          network,
+          name: opts?.name,
+          // Paste mode always uses step-mode (paused before build from the start)
+          step_mode: true,
+        });
+        return result;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Failed to create contract';
+        setError(msg);
+        throw err;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [],
+  );
+
   // ── lazy getters (called when phase === "done") ───────────────────────────────
   const getCode = useCallback(async (): Promise<ContractCode> => {
     if (!uid) throw new Error('No contract uid');
@@ -149,6 +178,7 @@ export function useContract(uid: string | null) {
     code,
     audit,
     createContract,
+    createPasteContract,
     getCode,
     getAudit,
   };

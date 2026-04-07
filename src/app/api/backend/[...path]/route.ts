@@ -60,7 +60,9 @@ async function handleRequest(
 ) {
   try {
     const path = pathSegments.join('/');
-    const url = `${BACKEND_URL}/${path}`;
+    // Preserve query string (e.g. ?confirm=true for deploy endpoint).
+    const search = request.nextUrl.search;
+    const url = `${BACKEND_URL}/${path}${search}`;
 
     console.log(`🔄 Proxying ${method} request to: ${url}`);
     

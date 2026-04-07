@@ -62,6 +62,13 @@ export const SmartActionButton = ({
           className: 'bg-blue-600 text-white hover:bg-blue-700',
           disabled: false
         };
+      case 'auditing':
+        return {
+          text: 'Auditing',
+          icon: Loader2,
+          className: 'bg-blue-600/40 text-blue-300/80 cursor-not-allowed',
+          disabled: true
+        };
       case 'publish':
         return {
           text: 'Publish',
@@ -144,7 +151,7 @@ export const SmartActionButton = ({
         disabled={isDisabled}
       >
         <Icon 
-          className={`w-4 h-4 ${state === 'publishing' ? 'animate-spin' : ''}`} 
+          className={`w-4 h-4 ${state === 'publishing' || state === 'building' || state === 'auditing' ? 'animate-spin' : ''}`}
         />
         {config.text}
       </motion.button>

@@ -34,7 +34,7 @@ export interface ChatMessage {
 }
 
 export type CodeSource = 'empty' | 'user-input' | 'ai-generated';
-export type ActionButtonState = 'inactive' | 'review' | 'build' | 'building' | 'audit' | 'publish' | 'publishing' | 'upgrade';
+export type ActionButtonState = 'inactive' | 'review' | 'build' | 'building' | 'audit' | 'auditing' | 'publish' | 'publishing' | 'upgrade';
 
 // New types for API work
 export interface User {

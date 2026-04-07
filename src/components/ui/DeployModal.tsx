@@ -2,10 +2,12 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { useState, useEffect } from 'react';
-import { X, Rocket, CheckCircle, AlertCircle, Upload, Globe, ExternalLink, Info } from 'lucide-react';
+import { X, Rocket, CheckCircle, AlertCircle, Globe, ExternalLink, Info, Coins, AlertTriangle } from 'lucide-react';
 import { DancingDotsLoader } from './DancingDotsLoader';
-import { API_BASE_URL, ENDPOINTS } from '@/config/api';
 import { apiClient } from '@/services/api';
+import { tryRefresh } from '@/services/authService';
+import { fetchContractStatusAuthorized } from '@/services/contractStatusPoll';
+import type { DeployEstimate } from '@/lib/api';
 
 interface DeployModalProps {
   isOpen: boolean;
@@ -24,6 +26,9 @@ export const DeployModal = ({ isOpen, onClose, onComplete, network, bummUid }: D
   const [contractAddress, setContractAddress] = useState('');
   const [errorMessage, setErrorMessage]   = useState('');
   const [currentStage, setCurrentStage]   = useState('');
+  const [estimate, setEstimate]           = useState<DeployEstimate | null>(null);
+  const [estimateLoading, setEstimateLoading] = useState(false);
+  const [estimateError, setEstimateError] = useState('');
 
   useEffect(() => {
     if (!isOpen) {
@@ -31,8 +36,31 @@ export const DeployModal = ({ isOpen, onClose, onComplete, network, bummUid }: D
       setContractAddress('');
       setErrorMessage('');
       setCurrentStage('');
+      setEstimate(null);
+      setEstimateError('');
+      return;
     }
-  }, [isOpen]);
+
+    if (!bummUid) return;
+
+    let cancelled = false;
+    setEstimateLoading(true);
+    setEstimateError('');
+
+    (async () => {
+      try {
+        await tryRefresh();
+        const est = await apiClient.getDeployEstimate(bummUid);
+        if (!cancelled) setEstimate(est);
+      } catch {
+        if (!cancelled) setEstimateError('Could not load cost estimate.');
+      } finally {
+        if (!cancelled) setEstimateLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [isOpen, bummUid]);
 
   const startDeploy = async () => {
     if (!bummUid) {
@@ -47,23 +75,18 @@ export const DeployModal = ({ isOpen, onClose, onComplete, network, bummUid }: D
     let cancelled = false;
 
     try {
-      // Trigger the deploy step — pipeline was paused before deploy.
+      await tryRefresh();
       await apiClient.triggerDeploy(bummUid);
 
-      const token = localStorage.getItem('access_token') || '';
-      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
-
-      const maxAttempts = 120; // 4 min at 2s intervals
+      const pollMs = 2000;
+      const maxAttempts = 180; // 6 min
       let attempts = 0;
 
       while (!cancelled && attempts < maxAttempts) {
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, pollMs));
         attempts++;
 
-        const res = await fetch(
-          `${API_BASE_URL}${ENDPOINTS.CONTRACT_STATUS(bummUid)}`,
-          { headers },
-        );
+        const res = await fetchContractStatusAuthorized(bummUid);
         if (!res.ok) continue;
 
         const data = await res.json();
@@ -75,19 +98,30 @@ export const DeployModal = ({ isOpen, onClose, onComplete, network, bummUid }: D
           setCurrentStage('Finalizing…');
         }
 
-        if (phase === 'done' && data.program_id) {
-          setContractAddress(data.program_id);
-          setDeployStatus('success');
-          onComplete?.(data.program_id);
-          return;
+        if (phase === 'failed') {
+          throw new Error(
+            (data as { error?: string }).error?.trim() ||
+              'Deployment failed. Check devnet SOL / faucet limits and backend logs.',
+          );
         }
 
-        if (phase === 'failed') {
-          throw new Error(data.error || 'Deployment failed');
+        if (phase === 'done') {
+          if (data.program_id) {
+            setContractAddress(data.program_id);
+            setDeployStatus('success');
+            onComplete?.(data.program_id);
+            return;
+          }
+          const err = (data as { error?: string }).error?.trim();
+          throw new Error(
+            err
+              ? `Deploy did not return a program ID: ${err}`
+              : 'Pipeline finished without a program ID. Refresh status or try Deploy again.',
+          );
         }
       }
 
-      throw new Error('Deployment timed out after 4 minutes');
+      throw new Error('Deployment timed out after 6 minutes');
     } catch (err) {
       if (cancelled) return;
       setErrorMessage(err instanceof Error ? err.message : 'Deployment failed');
@@ -98,6 +132,14 @@ export const DeployModal = ({ isOpen, onClose, onComplete, network, bummUid }: D
   };
 
   const explorerUrl = `https://explorer.solana.com/address/${contractAddress}?cluster=${network === 'mainnet' ? 'mainnet-beta' : 'devnet'}`;
+
+  const buyCreditsUrl = estimate && estimate.missing_credits > 0
+    ? `/credits?amount=${estimate.missing_credits}`
+    : '/credits';
+
+  const isMainnet = network === 'mainnet';
+  const hasCost = estimate && isMainnet && estimate.estimated_credits > 0;
+  const insufficient = estimate ? !estimate.sufficient : false;
 
   return (
     <AnimatePresence>
@@ -140,6 +182,7 @@ export const DeployModal = ({ isOpen, onClose, onComplete, network, bummUid }: D
               {/* Confirmation screen */}
               {deployStatus === 'confirming' && (
                 <div className="space-y-4">
+                  {/* Deployment info */}
                   <div className="bg-[#191919] border border-blue-500/20 rounded-lg p-3">
                     <div className="flex items-start gap-2">
                       <Info className="w-4 h-4 text-blue-400 mt-0.5 flex-shrink-0" />
@@ -153,23 +196,109 @@ export const DeployModal = ({ isOpen, onClose, onComplete, network, bummUid }: D
                       </div>
                     </div>
                   </div>
+
+                  {/* Cost estimate */}
                   <div className="bg-[#191919] border border-[#333] rounded-lg p-3 space-y-2">
                     <div className="flex justify-between text-xs">
                       <span className="text-gray-400">Network</span>
                       <span className="text-white font-medium capitalize">{network}</span>
                     </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-gray-400">Deploy cost</span>
-                      <span className="text-green-400 font-medium">Protocol-paid</span>
-                    </div>
-                    <div className="flex justify-between text-xs">
-                      <span className="text-gray-400">Credits needed</span>
-                      <span className="text-yellow-400 font-medium">Included in pipeline</span>
-                    </div>
+
+                    {estimateLoading && (
+                      <div className="flex items-center gap-2 py-1">
+                        <DancingDotsLoader />
+                        <span className="text-xs text-gray-500">Loading cost estimate…</span>
+                      </div>
+                    )}
+
+                    {estimateError && !estimateLoading && (
+                      <div className="text-xs text-yellow-500/80">{estimateError}</div>
+                    )}
+
+                    {estimate && !estimateLoading && (
+                      <>
+                        {hasCost ? (
+                          <>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-gray-400">Program size</span>
+                              <span className="text-white font-medium">
+                                {estimate.so_size_bytes
+                                  ? `${(estimate.so_size_bytes / 1024).toFixed(0)} KB`
+                                  : '~300 KB (estimate)'}
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-gray-400">Estimated cost</span>
+                              <span className="text-orange-400 font-medium">
+                                {estimate.estimated_sol} SOL ≈ {estimate.estimated_credits} credits
+                              </span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-gray-400">Your balance</span>
+                              <span className={`font-medium ${insufficient ? 'text-red-400' : 'text-green-400'}`}>
+                                {estimate.user_balance_credits} credits
+                              </span>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-gray-400">Deploy cost</span>
+                              <span className="text-green-400 font-medium">Free (devnet)</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-gray-400">Credits needed</span>
+                              <span className="text-yellow-400 font-medium">Included in pipeline</span>
+                            </div>
+                          </>
+                        )}
+                      </>
+                    )}
+
+                    {!estimate && !estimateLoading && !estimateError && (
+                      <>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-400">Deploy cost</span>
+                          <span className="text-green-400 font-medium">Protocol-paid</span>
+                        </div>
+                        <div className="flex justify-between text-xs">
+                          <span className="text-gray-400">Credits needed</span>
+                          <span className="text-yellow-400 font-medium">Included in pipeline</span>
+                        </div>
+                      </>
+                    )}
                   </div>
+
+                  {/* Insufficient credits warning */}
+                  {insufficient && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-red-950/40 border border-red-500/30 rounded-lg p-3"
+                    >
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
+                        <div className="flex-1">
+                          <p className="text-red-300 text-xs font-medium mb-1">Insufficient Credits</p>
+                          <p className="text-red-400/80 text-xs leading-relaxed">
+                            You need {estimate!.missing_credits} more credits to deploy on mainnet.
+                          </p>
+                          <a
+                            href={buyCreditsUrl}
+                            className="inline-flex items-center gap-1 mt-2 text-xs text-orange-400 hover:text-orange-300 font-medium transition-colors"
+                          >
+                            <Coins className="w-3.5 h-3.5" />
+                            Buy {estimate!.missing_credits} credits →
+                          </a>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+
                   <button
                     onClick={startDeploy}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-lg font-medium text-sm transition-all"
+                    disabled={insufficient}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-lg font-medium text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:from-orange-500 disabled:hover:to-orange-600"
                   >
                     <Rocket className="w-4 h-4" />
                     Deploy to {network}
@@ -185,7 +314,7 @@ export const DeployModal = ({ isOpen, onClose, onComplete, network, bummUid }: D
                       <DancingDotsLoader />
                       <span className="text-white font-medium text-sm">{currentStage}</span>
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">This may take 1–3 minutes</p>
+                    <p className="text-xs text-gray-500 mt-1">Audit + deploy may take several minutes</p>
                   </div>
                   <div className="space-y-1.5">
                     {[

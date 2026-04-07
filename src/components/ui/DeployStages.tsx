@@ -69,6 +69,13 @@ export const DeployStages = ({ isDeploying, onComplete, onAddAIMessage }: Deploy
   const [completedStages, setCompletedStages] = useState<string[]>([]);
 
   useEffect(() => {
+    if (!isDeploying && completedStages.length > 0) {
+      setCompletedStages(deployStages.map(s => s.id));
+      onComplete();
+    }
+  }, [isDeploying]);
+
+  useEffect(() => {
     if (!isDeploying) {
       setCurrentStageIndex(0);
       setCompletedStages([]);
@@ -76,20 +83,12 @@ export const DeployStages = ({ isDeploying, onComplete, onAddAIMessage }: Deploy
     }
 
     let timeoutId: NodeJS.Timeout;
-    
-    if (currentStageIndex < deployStages.length) {
+
+    if (currentStageIndex < deployStages.length - 1) {
       const currentStage = deployStages[currentStageIndex];
-      
       timeoutId = setTimeout(() => {
         setCompletedStages(prev => [...prev, currentStage.id]);
-        
-        if (currentStageIndex === deployStages.length - 1) {
-          setTimeout(() => {
-            onComplete();
-          }, 500);
-        } else {
-          setCurrentStageIndex(prev => prev + 1);
-        }
+        setCurrentStageIndex(prev => prev + 1);
       }, currentStage.duration);
     }
 

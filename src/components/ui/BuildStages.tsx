@@ -75,6 +75,14 @@ export const BuildStages = ({ isBuilding, onComplete, onAddAIMessage }: BuildSta
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [completedStages, setCompletedStages] = useState<string[]>([]);
 
+  // When backend finishes, flash complete + call onComplete.
+  useEffect(() => {
+    if (!isBuilding && completedStages.length > 0) {
+      setCompletedStages(buildStages.map(s => s.id));
+      onComplete();
+    }
+  }, [isBuilding]);
+
   useEffect(() => {
     if (!isBuilding) {
       setCurrentStageIndex(0);
@@ -84,19 +92,12 @@ export const BuildStages = ({ isBuilding, onComplete, onAddAIMessage }: BuildSta
 
     let timeoutId: NodeJS.Timeout;
     
-    if (currentStageIndex < buildStages.length) {
+    // Park on the last stage until the real backend build finishes (isBuilding → false).
+    if (currentStageIndex < buildStages.length - 1) {
       const currentStage = buildStages[currentStageIndex];
-      
       timeoutId = setTimeout(() => {
         setCompletedStages(prev => [...prev, currentStage.id]);
-        
-        if (currentStageIndex === buildStages.length - 1) {
-          setTimeout(() => {
-            onComplete();
-          }, 500);
-        } else {
-          setCurrentStageIndex(prev => prev + 1);
-        }
+        setCurrentStageIndex(prev => prev + 1);
       }, currentStage.duration);
     }
 
