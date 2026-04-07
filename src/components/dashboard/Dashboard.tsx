@@ -242,8 +242,14 @@ export default function Dashboard() {
     if (!contract.status) return;
     const { phase, error, next_step } = contract.status;
 
-    // Always update animation phase
-    setPipelinePhase(phase);
+    // Only update animation phase while something is actively running.
+    // WS sends heartbeats every 2 s; without this guard the heartbeats
+    // re-set pipelinePhase back to 'building' AFTER the completion watcher
+    // clears it, making the BuildStages animation hang forever.
+    const stepActive = pipelineStepRunning === 'running' || pipelineStepRunning === 'triggering';
+    if (pipelineMsgId || stepActive) {
+      setPipelinePhase(phase);
+    }
 
     if (!pipelineMsgId) return;
 
@@ -873,8 +879,13 @@ export default function Dashboard() {
     if (!step) return;
 
     if (contract.status.phase === 'failed') {
-      setPipelineStepError(contract.status.error ?? 'Pipeline failed');
+      const errMsg = contract.status.error ?? 'Pipeline failed';
+      setPipelineStepError(errMsg);
       setPipelineStepRunning('error');
+      setPipelinePhase(null);
+      // Emit a prominent chat message so the user sees the failure in the chat log
+      const stepLabel = step === 'build' ? 'Build' : step === 'audit' ? 'Audit' : 'Deploy';
+      addAIMessage(`❌ **${stepLabel} failed:** ${errMsg}`);
       triggeredStepRef.current = null;
       return;
     }
@@ -914,36 +925,26 @@ export default function Dashboard() {
     }
 
     // Emit stylized chat summary for the finished step.
-    if (step === 'build') {
+    // Uses apiClient (which goes through the Next.js proxy with correct
+    // /api/v1/ prefix + auth headers) instead of raw fetch().
+    if (step === 'build' && uid) {
       const attempts = contract.status.build_attempt ?? 1;
       const fixed = Math.max(0, attempts - 1);
-      // Fetch detailed fix list from /fixes endpoint.
       (async () => {
         try {
-          const token = localStorage.getItem('bumm_access_token');
-          const res = await fetch(`/api/backend/contracts/${uid}/fixes`, {
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-          });
-          if (res.ok) {
-            const data: {
-              fixes: Array<{ error_pattern: string; fix_description: string; source: string; was_successful: boolean | null }>;
-            } = await res.json();
-            const fixes = (data.fixes || []).filter(f => f.was_successful !== false);
-            if (fixes.length > 0) {
-              const list = fixes.slice(0, 6).map((f, i) =>
-                `${i + 1}. ${f.fix_description}${f.source === 'knowledge_base' ? ' *(from KB)*' : ''}`
-              ).join('\n');
-              addAIMessage(
-                `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Auto-applied **${fixes.length}** fix${fixes.length === 1 ? '' : 'es'}:\n\n${list}${fixes.length > 6 ? `\n…and ${fixes.length - 6} more.` : ''}`
-              );
-              return;
-            }
+          const data = await apiClient.getContractFixes(uid);
+          const fixes = (data.fixes || []).filter(f => f.was_successful !== false);
+          if (fixes.length > 0) {
+            const list = fixes.slice(0, 6).map((f, i) =>
+              `${i + 1}. ${f.fix_description}${f.source === 'knowledge_base' ? ' *(from KB)*' : ''}`
+            ).join('\n');
+            addAIMessage(
+              `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Auto-applied **${fixes.length}** fix${fixes.length === 1 ? '' : 'es'}:\n\n${list}${fixes.length > 6 ? `\n…and ${fixes.length - 6} more.` : ''}`
+            );
+            return;
           }
         } catch {
-          // fall through to generic message
+          // /fixes endpoint may not exist yet or contract has no fixes — fall through
         }
         addAIMessage(
           fixed > 0
@@ -952,28 +953,20 @@ export default function Dashboard() {
         );
       })();
     } else if (step === 'audit' && uid) {
-      // Fetch full audit report + vulns to surface as chat message.
       (async () => {
         try {
-          const res = await fetch(`/api/backend/contracts/${uid}/audit`, {
-            headers: { 'Content-Type': 'application/json' },
-          });
-          if (res.ok) {
-            const data = await res.json();
-            const vulns: Array<{ severity?: string; title?: string; description?: string }> = data.vulns || [];
-            const attempts = contract.status?.audit_attempt ?? 1;
-            if (vulns.length === 0) {
-              addAIMessage(`🛡️ **Audit passed** — no critical or high-severity issues found. Contract is ready to deploy.`);
-            } else {
-              const list = vulns.slice(0, 8).map((v, i) =>
-                `${i + 1}. **[${(v.severity || 'info').toUpperCase()}]** ${v.title || 'Finding'}${v.description ? ` — ${v.description}` : ''}`
-              ).join('\n');
-              addAIMessage(
-                `🛡️ **Audit complete** (${attempts} pass${attempts > 1 ? 'es' : ''}). Found and patched **${vulns.length}** vulnerabilit${vulns.length === 1 ? 'y' : 'ies'}:\n\n${list}${vulns.length > 8 ? `\n…and ${vulns.length - 8} more.` : ''}\n\nAll critical/high findings were auto-fixed and the contract was rebuilt successfully.`
-              );
-            }
+          const data = await apiClient.getContractAudit(uid);
+          const vulns: Array<{ severity?: string; title?: string; description?: string }> = data.vulns || [];
+          const attempts = contract.status?.audit_attempt ?? 1;
+          if (vulns.length === 0) {
+            addAIMessage(`🛡️ **Audit passed** — no critical or high-severity issues found. Contract is ready to deploy.`);
           } else {
-            addAIMessage(`🛡️ **Audit complete.** Contract is ready for deployment.`);
+            const list = vulns.slice(0, 8).map((v, i) =>
+              `${i + 1}. **[${(v.severity || 'info').toUpperCase()}]** ${v.title || 'Finding'}${v.description ? ` — ${v.description}` : ''}`
+            ).join('\n');
+            addAIMessage(
+              `🛡️ **Audit complete** (${attempts} pass${attempts > 1 ? 'es' : ''}). Found and patched **${vulns.length}** vulnerabilit${vulns.length === 1 ? 'y' : 'ies'}:\n\n${list}${vulns.length > 8 ? `\n…and ${vulns.length - 8} more.` : ''}\n\nAll critical/high findings were auto-fixed and the contract was rebuilt successfully.`
+            );
           }
         } catch {
           addAIMessage(`🛡️ **Audit complete.** Contract is ready for deployment.`);

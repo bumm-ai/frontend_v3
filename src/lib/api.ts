@@ -77,7 +77,7 @@ export interface ContractCode {
 
 export interface ContractAudit {
   report: string;
-  vulns: Record<string, unknown>;
+  vulns: Array<{ severity?: string; title?: string; description?: string }>;
 }
 
 // ── Credits ───────────────────────────────────────────────────────────────────

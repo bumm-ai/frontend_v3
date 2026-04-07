@@ -184,6 +184,21 @@ export class ApiClient {
     return apiFetch(ENDPOINTS.CONTRACT_DEPLOY_ESTIMATE(uid));
   }
 
+  async getContractFixes(uid: string): Promise<{
+    uid: string;
+    build_ok: boolean;
+    build_attempts: number;
+    fixes: Array<{
+      source: string;
+      kb_entry_id: string | null;
+      error_pattern: string;
+      fix_description: string;
+      was_successful: boolean | null;
+    }>;
+  }> {
+    return apiFetch(ENDPOINTS.CONTRACT_FIXES(uid));
+  }
+
   async saveContractChat(uid: string, messages: Array<Record<string, unknown>>): Promise<{ status: string; message_count: number }> {
     return apiFetch(ENDPOINTS.CONTRACT_CHAT(uid), {
       method: 'PUT',
