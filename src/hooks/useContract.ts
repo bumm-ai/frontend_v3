@@ -13,9 +13,80 @@ import type {
   Network,
   Phase,
 } from '@/lib/api';
+import type { ActionButtonState } from '@/types/dashboard';
 
 const TERMINAL: Phase[] = ['done', 'failed'];
 const RECONNECT_DELAYS = [1000, 2000, 5000, 10000];
+
+// ── Pure derivation ───────────────────────────────────────────────────────────
+
+/** Which stage animation is currently active in the preview panel. */
+export type AnimationStage = 'generating' | 'building' | 'auditing' | 'deploying' | null;
+
+/**
+ * Derive button state and animation stage from raw backend ContractStatus.
+ *
+ * Rules:
+ *  1. build_ok / audit_ok / program_id take priority over raw `phase`.
+ *     This means stale WS heartbeats (e.g. phase='building' after build_ok=true)
+ *     can NEVER re-arm an animation that has already finished.
+ *  2. While a step is actively running (phase matches AND ok flag is false),
+ *     return the loader button state.
+ *  3. When idle, derive button monotonically from ok flags.
+ */
+export function deriveUIFromStatus(
+  status: ContractStatus | null,
+  hasCode: boolean,
+  pendingStep?: 'build' | 'audit' | 'deploy' | null,
+): { buttonState: ActionButtonState; animationStage: AnimationStage } {
+  // Optimistic override: immediately show loader between button click and the
+  // first WS heartbeat that confirms the phase changed. Prevents double-clicks.
+  if (pendingStep === 'build'  && !status?.build_ok)  return { buttonState: 'building',   animationStage: 'building'   };
+  if (pendingStep === 'audit'  && !status?.audit_ok)  return { buttonState: 'auditing',   animationStage: 'auditing'   };
+  if (pendingStep === 'deploy' && !status?.program_id) return { buttonState: 'publishing', animationStage: 'deploying'  };
+
+  if (!status) {
+    return { buttonState: hasCode ? 'build' : 'inactive', animationStage: null };
+  }
+
+  const { phase, build_ok, audit_ok, program_id } = status;
+
+  // Derive animation stage — only when the corresponding step is NOT yet complete
+  let animationStage: AnimationStage = null;
+  if (phase === 'enriching' || phase === 'generating') {
+    animationStage = 'generating';
+  } else if (
+    !build_ok &&
+    (phase === 'building' || phase === 'build_fixing' || phase === 'learning')
+  ) {
+    animationStage = 'building';
+  } else if (
+    !audit_ok &&
+    (phase === 'auditing_static' || phase === 'auditing_llm' || phase === 'audit_fixing')
+  ) {
+    animationStage = 'auditing';
+  } else if (!program_id && phase === 'deploying') {
+    animationStage = 'deploying';
+  }
+
+  // While running → loader button overrides idle state
+  if (animationStage === 'generating' || animationStage === 'building') {
+    return { buttonState: 'building', animationStage };
+  }
+  if (animationStage === 'auditing') {
+    return { buttonState: 'auditing', animationStage };
+  }
+  if (animationStage === 'deploying') {
+    return { buttonState: 'publishing', animationStage };
+  }
+
+  // Idle — monotonically forward from ok flags
+  if (program_id) return { buttonState: 'upgrade',  animationStage: null };
+  if (audit_ok)   return { buttonState: 'publish',   animationStage: null };
+  if (build_ok)   return { buttonState: 'audit',     animationStage: null };
+  if (hasCode)    return { buttonState: 'build',     animationStage: null };
+  return           { buttonState: 'inactive',  animationStage: null };
+}
 
 // ── hook ──────────────────────────────────────────────────────────────────────
 

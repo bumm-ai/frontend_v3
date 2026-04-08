@@ -163,10 +163,11 @@ vite.config.ts.timestamp-*
 bumm-hotfix-4issues/
 
 # Custom exclusions for Bumm project
-# Exclude all .md files except README.md and CLAUDE.md
+# Exclude all .md files except README.md, CLAUDE.md, and project docs
 *.md
 !README.md
 !CLAUDE.md
+!PROJECT_STATE.md
 !WORKFLOW_ANALYSIS.md
 !DEMO_QUICK_GUIDE.md
 !docs/**/*.md
@@ -175,16 +176,10 @@ bumm-hotfix-4issues/
 *.html
 !bummLend.html
 
-# Exclude test and fix files in main repository
+# Exclude ad-hoc test/fix scripts (root-level only, not src/ unit tests)
 test-*.js
 fix-*.js
 debug-*.js
-*Test.ts
-*test.ts
-*_test.ts
-*Test.tsx
-*test.tsx
-*_test.tsx
 
 # Exclude specific test and debug files
 test-different-data.js
@@ -218,15 +213,11 @@ GOOGLE_ANALYTICS_SETUP.md
 
 # Production exclusions - files not needed in production
 # Development and testing files
+# Note: __tests__/ and *.test.ts in src/ are kept (unit tests are part of the codebase)
 *.test.js
-*.test.ts
-*.test.tsx
 *.spec.js
 *.spec.ts
 *.spec.tsx
-__tests__/
-tests/
-test/
 spec/
 
 # Development tools and configs

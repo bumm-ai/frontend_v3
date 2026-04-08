@@ -12,6 +12,7 @@ import { DashboardFooter } from '../ui/DashboardFooter';
 import { InteractiveCodeEditor } from '../ui/InteractiveCodeEditor';
 import { SmartActionButton } from '../ui/SmartActionButton';
 import { ChatMessage, CodeSource, ActionButtonState, Project, User } from '@/types/dashboard';
+import type { AnimationStage } from '@/hooks/useContract';
 import { isGenerationCommand } from '@/utils/generationCommands';
 
 interface ChatScreenProps {
@@ -42,10 +43,11 @@ interface ChatScreenProps {
   generatedCode?: { projectUid: string; code: string } | null;
   onGeneratedCodeApplied?: () => void;
   generationAttemptFailed?: number;
-  pipelinePhase?: string | null;
+  /** Derived button state from deriveUIFromStatus — no local override needed. */
+  buttonState?: ActionButtonState;
+  /** Derived animation stage from deriveUIFromStatus. */
+  animationStage?: AnimationStage;
   onStartStep?: (step: 'build' | 'audit' | 'deploy') => Promise<void>;
-  pipelineStepRunning?: 'idle' | 'triggering' | 'running' | 'error';
-  pipelineStepError?: string | null;
 }
 
 export default function ChatScreen({ 
@@ -74,10 +76,9 @@ export default function ChatScreen({
   generatedCode,
   onGeneratedCodeApplied,
   generationAttemptFailed = 0,
-  pipelinePhase,
+  buttonState: buttonStateProp,
+  animationStage = null,
   onStartStep,
-  pipelineStepRunning = 'idle',
-  pipelineStepError,
 }: ChatScreenProps) {
   const router = useRouter();
   const [inputValue, setInputValue] = useState('');
@@ -114,19 +115,25 @@ export default function ChatScreen({
     scrollToBottom();
   }, [messages]);
   const [contractCode, setContractCode] = useState('');
-  const [actionButtonState, setActionButtonState] = useState<ActionButtonState>('inactive');
+  // actionButtonState: driven by prop from Dashboard (deriveUIFromStatus).
+  // Local state is used as fallback when:
+  //   - no prop arrives yet (initial render)
+  //   - prop is 'inactive' but local has a meaningful state (e.g. 'review' from
+  //     pasted code before any backend project exists — Dashboard doesn't know
+  //     about contractCode in our local state, so it correctly returns 'inactive',
+  //     but we should still surface the 'review' button to let user proceed).
+  const [localButtonState, setLocalButtonState] = useState<ActionButtonState>('inactive');
+  const actionButtonState: ActionButtonState =
+    buttonStateProp && buttonStateProp !== 'inactive'
+      ? buttonStateProp
+      : localButtonState;
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // Derive animation flags from the live pipeline phase coming from Dashboard
-  const isPipelineGenerating = pipelinePhase === 'generating' || pipelinePhase === 'enriching';
-  const [pendingStep, setPendingStep] = useState<'build' | 'audit' | 'deploy' | null>(null);
-  const phaseBuilding  = pipelinePhase === 'building' || pipelinePhase === 'build_fixing';
-  const phaseAuditing  = pipelinePhase === 'auditing_static' || pipelinePhase === 'auditing_llm' || pipelinePhase === 'audit_fixing';
-  const phaseDeploying = pipelinePhase === 'deploying';
-  const stepActive = pendingStep !== null;
-  const isPipelineBuilding   = phaseBuilding  || (stepActive && pendingStep === 'build');
-  const isPipelineAuditing   = phaseAuditing  || (stepActive && pendingStep === 'audit');
-  const isPipelineDeploying  = phaseDeploying || (stepActive && pendingStep === 'deploy');
+  // Animation flags — pure derivation from animationStage prop (no local mirrors)
+  const isPipelineGenerating = animationStage === 'generating';
+  const isPipelineBuilding   = animationStage === 'building';
+  const isPipelineAuditing   = animationStage === 'auditing';
+  const isPipelineDeploying  = animationStage === 'deploying';
   const [isContractDeployed, setIsContractDeployed] = useState(() => {
     if (typeof window !== 'undefined' && currentProject) {
       try {
@@ -210,22 +217,25 @@ export default function ChatScreen({
           setLastUpdateDate(savedUpdateDate ? new Date(savedUpdateDate) : undefined);
         }
 
-        // Derive button state from project status — no localStorage needed
-        if (deployed || currentProject.status === 'deployed') {
-          setActionButtonState('upgrade');
-        } else if (currentProject.status === 'audited') {
-          setActionButtonState('publish');
-        } else if (currentProject.status === 'built') {
-          setActionButtonState('audit');
-        } else if (resolvedCode.trim()) {
-          setActionButtonState('build');
-        } else {
-          setActionButtonState('inactive');
+        // Button state is now derived from backend via buttonStateProp (deriveUIFromStatus).
+        // Local fallback for initial render before first heartbeat arrives.
+        if (!buttonStateProp) {
+          if (deployed || currentProject.status === 'deployed') {
+            setLocalButtonState('upgrade');
+          } else if (currentProject.status === 'audited') {
+            setLocalButtonState('publish');
+          } else if (currentProject.status === 'built') {
+            setLocalButtonState('audit');
+          } else if (resolvedCode.trim()) {
+            setLocalButtonState('build');
+          } else {
+            setLocalButtonState('inactive');
+          }
         }
       } catch (err) {
         console.warn('Failed to load project states:', err);
         setContractCode('');
-        setActionButtonState('inactive');
+        setLocalButtonState('inactive');
         setIsContractDeployed(false);
         setDeployedContractAddress(undefined);
         setDeploymentDate(undefined);
@@ -234,7 +244,7 @@ export default function ChatScreen({
     } else {
       // No project selected — clear all states
       setContractCode('');
-      setActionButtonState('inactive');
+      setLocalButtonState('inactive');
       setIsContractDeployed(false);
       setDeployedContractAddress(undefined);
       setDeploymentDate(undefined);
@@ -297,10 +307,11 @@ export default function ChatScreen({
     if (generatedCode && generatedCode.projectUid === currentProject?.uid && generatedCode.code) {
       setContractCode(generatedCode.code);
       setIsGenerating(false);
-      setActionButtonState('build'); // Build → Audit → Publish flow
+      // Button state comes from buttonStateProp (deriveUIFromStatus). Set local fallback only.
+      if (!buttonStateProp) setLocalButtonState('build');
       onGeneratedCodeApplied?.();
     }
-  }, [generatedCode, currentProject?.uid, onGeneratedCodeApplied]);
+  }, [generatedCode, currentProject?.uid, onGeneratedCodeApplied, buttonStateProp]);
 
   // Clear loading state when generation fails (e.g. timeout)
   useEffect(() => {
@@ -328,19 +339,19 @@ export default function ChatScreen({
     setContractCode(code);
     
     if (code.trim() === '') {
-      setActionButtonState('inactive');
+      setLocalButtonState('inactive');
     } else if (isContractDeployed && !contractIsFrozen) {
       // If contract is already deployed and not frozen, show Upgrade (even on manual change)
-      setActionButtonState('upgrade');
+      setLocalButtonState('upgrade');
     } else if (source === 'user-input') {
       // Only if contract is NOT deployed, manual change gives Review
-      setActionButtonState('review');
+      setLocalButtonState('review');
     } else if (source === 'ai-generated') {
       // AI-generated code - don't set state here,
       // it will be set in handleGenerationComplete after generation completion
-      // setActionButtonState('build'); // Removed - will be set after generation completion
+      // setLocalButtonState('build'); // Removed - will be set after generation completion
     } else {
-      setActionButtonState('publish');
+      setLocalButtonState('publish');
     }
   };
 
@@ -348,10 +359,7 @@ export default function ChatScreen({
 
   const handleGenerationComplete = () => {
     setIsGenerating(false);
-    setActionButtonState('build');
-    
-    // Remove duplicate message - it's added in Dashboard.tsx during real generation
-    onAddAIMessage("Smart contract generated successfully! The contract is ready for building and testing.");
+    if (!buttonStateProp) setLocalButtonState('build');
   };
 
   const handleActionClick = async () => {
@@ -368,52 +376,20 @@ export default function ChatScreen({
     if (bummUid && onStartStep) {
       const step: 'build' | 'audit' | 'deploy' | null =
         actionButtonState === 'build'    ? 'build'  :
-        actionButtonState === 'review'   ? 'audit'  :
+        actionButtonState === 'review'   ? 'build'  :
         actionButtonState === 'audit'    ? 'audit'  :
         actionButtonState === 'publish'  ? 'deploy' :
         actionButtonState === 'upgrade'  ? 'deploy' : null;
       if (step) {
-        setPendingStep(step);
         try { await onStartStep(step); } catch {}
       }
       return;
     }
   };
 
-  // Clear pendingStep once the backend run returns to idle (success or error).
-  useEffect(() => {
-    if (pipelineStepRunning === 'idle' && pendingStep) setPendingStep(null);
-  }, [pipelineStepRunning, pendingStep]);
-
-  // Advance button state based on backend project status updates.
-  useEffect(() => {
-    if (!currentProject) return;
-    if (currentProject.status === 'deployed')      setActionButtonState('upgrade');
-    else if (currentProject.status === 'audited')  setActionButtonState('publish');
-    else if (currentProject.status === 'built')    setActionButtonState('audit');
-  }, [currentProject?.status]);
-
-  // While a pipeline step is running, override the button into its loader state.
-  const effectiveButtonState: ActionButtonState = (() => {
-    const running = pipelineStepRunning === 'running' || pipelineStepRunning === 'triggering';
-    if (!running) return actionButtonState;
-    if (isPipelineDeploying || actionButtonState === 'publish' || actionButtonState === 'upgrade') return 'publishing';
-    if (isPipelineAuditing || actionButtonState === 'audit') return 'auditing';
-    return 'building';
-  })();
-
-  const PHASE_LABELS: Record<string, string> = {
-    generating: 'Generating code…',
-    enriching: 'Enriching prompt…',
-    building: '🔧 Compiling with Anchor…',
-    build_fixing: '🔧 Auto-fixing build errors…',
-    auditing_static: '🔍 Running static audit…',
-    auditing_llm: '🔍 LLM security review…',
-    audit_fixing: '🔍 Auto-fixing audit findings…',
-    deploying: '🚀 Deploying to Solana…',
-  };
-  const phaseLabel = pipelinePhase ? PHASE_LABELS[pipelinePhase] : null;
-  const showInlineStatus = pipelineStepRunning !== 'idle' || !!pipelineStepError;
+  // effectiveButtonState: buttonStateProp already includes loader state from deriveUIFromStatus.
+  // No local override needed.
+  const effectiveButtonState: ActionButtonState = actionButtonState;
 
   const handleContractFreeze = () => {
     setContractIsFrozen(true);
@@ -654,14 +630,15 @@ export default function ChatScreen({
               )}
             </div>
             
-            {/* Inline pipeline status */}
-            {showInlineStatus && (
+            {/* Inline pipeline status — shown while animation is active */}
+            {animationStage && (
               <div className="ml-4 text-xs">
-                {pipelineStepError ? (
-                  <span className="text-red-400">{pipelineStepError}</span>
-                ) : (
-                  <span className="text-orange-300">{phaseLabel ?? 'Working…'}</span>
-                )}
+                <span className="text-orange-300">
+                  {animationStage === 'generating' ? 'Generating…' :
+                   animationStage === 'building'   ? '🔧 Building…' :
+                   animationStage === 'auditing'   ? '🔒 Auditing…' :
+                   animationStage === 'deploying'  ? '🚀 Deploying…' : 'Working…'}
+                </span>
               </div>
             )}
 

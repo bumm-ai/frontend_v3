@@ -1,94 +1,98 @@
-# CLAUDE.md — Bumm AI Frontend v3 (thin client)
+# CLAUDE.md — Bumm AI Frontend v3
 
-> Single source of truth for Claude Code Desktop + Claude Projects.
-> Keep under 100 lines. Deep specs → `/docs/`.
+> Single source of truth for Claude Code. Keep under 120 lines. Deep specs → `PROJECT_STATE.md`.
 
 ## Project Overview
 
-**Bumm AI Frontend v3** — thin API client for the Bumm AI platform.
-The frontend does NOT implement LangGraph, KB, or pipeline — only UI, wallet, API calls, WebSocket status streaming.
+**Bumm AI Frontend v3** — thin orchestration client for the Bumm AI platform.
+The frontend does NOT implement LangGraph, KB, or pipeline — only UI, wallet, API calls, WebSocket streaming.
 
-- **This repo:** `frontend_v3` — Next.js 15 App Router, React 19
-- **Backend:** `backend_v3` — FastAPI + LangGraph (separate repo, port 8080)
-- **Spec:** `docs/TECHNICAL_SPEC_V3_1.md`, `docs/V3_THIN_CLIENT.md`
+Two user flows:
+- **AI Generate** — user types prompt → backend generates Anchor/Rust → user clicks Build → Audit → Deploy
+- **Paste Code** — user pastes own contract → clicks Review → Build → Audit → Deploy
+
+API/MCP clients skip the frontend entirely: `step_mode=false` runs the full pipeline automatically.
 
 ## Tech Stack
 
 - **Next.js 15.5** (App Router, NOT Pages Router)
-- **React 19** with hooks (functional components only)
+- **React 19** — functional components only, hooks for all business logic
 - **TypeScript** strict mode
 - **Tailwind CSS 4** (utility-first, no custom CSS unless necessary)
 - **Framer Motion** + **GSAP** for animations
 - **Solana Wallet Adapter** + **Web3.js**
+- **Vitest** for unit tests (NOT Jest)
 
 ## Architecture
 
 ```
-Component → useBummApi hook → bummService → ApiClient → Next.js proxy → Backend
+Dashboard.tsx → useContract (WS + API) → ApiClient → Next.js proxy (/api/backend/*) → Backend
+                    ↓
+             deriveUIFromStatus (pure fn, single source of truth for all button/animation state)
 ```
 
-- Proxy: `src/app/api/backend/[...path]/route.ts` → `BACKEND_URL`
-- Mock fallback: `src/lib/mockApi.ts` (auto on network/500 errors)
-- Auth: wallet connect → `POST /api/v1/user/wallet/` → `x-user-id` header
-- Status: polling (current) → WebSocket (v3.1 target)
+Key invariant: `deriveUIFromStatus` is the ONLY place that maps status → UI state. Never derive button state inline in components.
+
+## Critical: `deriveUIFromStatus` Rules
+
+1. `pendingStep` optimistic override fires FIRST (prevents double-click dead zone)
+2. `build_ok` / `audit_ok` / `program_id` flags beat `phase` (stale WS heartbeats cannot re-arm done animations)
+3. `'inactive'` from backend is treated as a fallback in `ChatScreen` (allows local `'review'` state to surface for paste flow)
+
+See: `src/hooks/useContract.ts`, `src/hooks/__tests__/deriveUIFromStatus.test.ts` (28 tests)
 
 ## Coding Standards
 
 - Functional components only, no class components
 - Custom hooks for all business logic (`use` prefix)
 - No `any` types — strict TypeScript
-- No god components (max 150 lines, extract sub-components)
+- No god components (max ~200 lines, extract sub-components)
 - Naming: PascalCase components, camelCase functions/variables
 - Imports: absolute paths via `@/` alias
-- No direct backend calls from components — always through service layer
-- localStorage keys prefixed with `bumm_`
+- No direct backend calls from components — always through `ApiClient` in `src/services/api.ts`
+- `localStorage` keys prefixed with `bumm_`; backend is the source of truth for contract state
 
-## File Structure Rules
+## File Structure
 
-- `src/app/` — pages and API routes (App Router)
-- `src/components/` — reusable UI components
-- `src/hooks/` — custom React hooks
-- `src/services/` — API client, business logic
-- `src/config/` — constants, endpoints
-- `src/lib/` — utilities, helpers
-- `src/types/` — TypeScript types/interfaces
+```
+src/
+├── app/                  # Next.js App Router pages + proxy route
+├── components/dashboard/ # Dashboard.tsx (orchestrator) + ChatScreen.tsx (UI)
+├── hooks/                # useContract, useAuth, useCredits, useGSAPAnimations
+│   └── __tests__/        # Vitest unit tests
+├── services/             # api.ts (ApiClient), authService.ts
+├── lib/                  # api.ts (shared TS types: ContractStatus, etc.)
+├── config/               # api.ts (ENDPOINTS constants)
+└── types/                # dashboard.ts (ActionButtonState, AnimationStage)
+```
 
-## Testing Strategy
+## Testing
 
-- Jest + React Testing Library
-- Test hooks with `renderHook`
-- Mock API responses, never hit real backend in tests
-- Coverage target: >70%
-- Run: `npm test`, `npm run test:coverage`
-
-## Workflow (strict order)
-
-1. **Plan** → discuss in Claude Code, reference spec
-2. **Tests** → write component/hook tests first
-3. **Implement** → Cursor for UI/styling speed
-4. **Review** → Claude Code checks architecture compliance
-5. **Docs** → update this file + relevant docs
-6. **Integrate** → PR, lint passes, merge
+- **Vitest** — `npm test` (configured in `vitest.config.ts`)
+- Unit tests in `src/hooks/__tests__/`
+- No E2E (Playwright removed — blocked by Phantom wallet bootstrap)
+- Coverage target: >70% for hooks
 
 ## Commands
 
 ```bash
-npm run dev          # Start dev server (port 3000)
-npm run build        # Production build
+npm run dev          # Dev server (port 3000)
+npm run build        # Production build + TypeScript check
 npm run lint         # ESLint
-npm test             # Jest
-npm run test:coverage
+npm test             # Vitest unit tests
+npm run test:watch   # Vitest watch mode
 ```
 
-## Key Migration Notes (v2 → v3.1)
+## Workflow
 
-- Replace polling with WebSocket (`/ws/contracts/{uid}`)
-- Use `bummUid` only (no fallback to contractCode)
-- Credits refresh after pipeline completion
-- Chat history from backend, not localStorage
+1. **Read** `PROJECT_STATE.md` to understand current state
+2. **Plan** — discuss approach, reference spec
+3. **Implement** — Cursor for UI/styling speed
+4. **Verify** — `tsc --noEmit` + `npm test`
+5. **Update** — `PROJECT_STATE.md` after every completed feature
 
-## Hooks (pre-commit)
+## Pre-commit checks
 
 - `npm run lint`
 - `npm run build` (type check)
-- `npm test -- --watchAll=false`
+- `npm test` (Vitest)

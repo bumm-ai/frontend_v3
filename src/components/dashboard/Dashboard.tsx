@@ -8,7 +8,7 @@ import { useBummApi } from '@/hooks/useBummApi';
 import { useCredits } from '@/hooks/useCredits';
 import { useAuth } from '@/hooks/useAuth';
 import { useAnalytics } from '@/hooks/useAnalytics';
-import { useContract } from '@/hooks/useContract';
+import { useContract, deriveUIFromStatus } from '@/hooks/useContract';
 import { apiClient } from '@/services/api';
 import { tryRefresh } from '@/services/authService';
 import type { ChatMessagePayload } from '@/lib/api';
@@ -135,16 +135,8 @@ export default function Dashboard() {
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
   const [pasteModalInitialCode, setPasteModalInitialCode] = useState<string | undefined>(undefined);
 
-  // ── Inline step-mode (Build / Audit / Deploy) ────────────────────────────
-  // Track which step the user just triggered from the Smart Contract Preview
-  // block so the Dashboard can reliably detect its completion from the WS
-  // phase stream (phase alone is unreliable — build node leaves phase='building'
-  // after pausing at the audit interrupt). Ref, not state, to avoid re-renders.
-  const triggeredStepRef = useRef<'build' | 'audit' | 'deploy' | null>(null);
-  const [pipelineStepRunning, setPipelineStepRunning] = useState<
-    'idle' | 'triggering' | 'running' | 'error'
-  >('idle');
-  const [pipelineStepError, setPipelineStepError] = useState<string | null>(null);
+  // Step triggering state removed — button/animation derive from contract.status
+  // via deriveUIFromStatus (no local mirrors needed).
 
   // Save message history for current project in localStorage
   useEffect(() => {
@@ -173,8 +165,309 @@ export default function Dashboard() {
     // State transition handled by the useEffect above when auth.isAuthenticated becomes true
   };
 
-  // ── Track current pipeline phase for preview panel animations ────────────
-  const [pipelinePhase, setPipelinePhase] = useState<string | null>(null);
+  // pipelinePhase removed — animationStage is now derived via deriveUIFromStatus
+
+  // ── Optimistic step pending state ────────────────────────────────────────
+  // Set immediately on button click → clears when WS confirms phase is active.
+  // Prevents double-clicks during the gap between HTTP trigger and first heartbeat.
+  const [pendingStep, setPendingStep] = useState<'build' | 'audit' | 'deploy' | null>(null);
+  const pendingStepRef = useRef(pendingStep); // always-current copy for use inside effects
+  pendingStepRef.current = pendingStep;
+
+  // ── Transition detector: previous status ref ──────────────────────────────
+  // Used to detect *changes* in ok flags / program_id / next_step
+  // without any local state mirrors. This is the ONLY effect watching contract.status.
+  const prevStatusRef = useRef<typeof contract.status>(null);
+  const projectCreatedRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!contract.status) return;
+    const prev = prevStatusRef.current;
+    const curr = contract.status;
+    prevStatusRef.current = curr;
+
+    // [0] Clear pendingStep once backend confirms the step is active or complete
+    const pending = pendingStepRef.current;
+    if (pending === 'build' && (curr.build_ok ||
+        curr.phase === 'building' || curr.phase === 'build_fixing' || curr.phase === 'learning')) {
+      setPendingStep(null);
+    }
+    if (pending === 'audit' && (curr.audit_ok ||
+        curr.phase === 'auditing_static' || curr.phase === 'auditing_llm' || curr.phase === 'audit_fixing')) {
+      setPendingStep(null);
+    }
+    if (pending === 'deploy' && (!!curr.program_id || curr.phase === 'deploying')) {
+      setPendingStep(null);
+    }
+    if (curr.phase === 'failed') setPendingStep(null);
+
+    // [A] Generate phase: update status message in chat while generating
+    if (pipelineMsgId) {
+      const phaseLabels: Record<string, string> = {
+        pending:          '⏳ Queued — waiting for worker...',
+        enriching:        '🔍 Analyzing your request...',
+        generating:       '⚡ Generating Solana smart contract...',
+        generated:        '📋 Code ready — click Build to compile.',
+        building:         '🔧 Building with Anchor framework...',
+        build_fixing:     '🔧 Fixing build errors...',
+        auditing_static:  '🔒 Running static security audit...',
+        auditing_llm:     '🔒 Running AI security review...',
+        audit_fixing:     '🔒 Fixing security issues...',
+        deploying:        '🚀 Deploying to devnet...',
+        learning:         '🧠 Updating knowledge base...',
+        done:             '✅ Contract deployed!',
+        failed:           `❌ Pipeline failed: ${curr.error ?? 'Unknown error'}`,
+      };
+      setMessages(prev => prev.map(m =>
+        m.id === pipelineMsgId
+          ? { ...m, content: phaseLabels[curr.phase] ?? `⚙️ ${curr.phase}...` }
+          : m
+      ));
+    }
+
+    // [B] Generate complete: next_step just became 'build'
+    if (
+      curr.next_step === 'build' &&
+      prev?.next_step !== 'build' &&
+      activeContractUid &&
+      projectCreatedRef.current !== activeContractUid
+    ) {
+      const uid = activeContractUid;
+      projectCreatedRef.current = uid;
+
+      // Build early project shell so sidebar shows immediately
+      const chatSnapshot = messages.filter(m =>
+        !m.content.startsWith('⏳') && !m.content.startsWith('⚙️') &&
+        !m.content.startsWith('🔍') && !m.content.startsWith('⚡') &&
+        !m.content.startsWith('🔧') && !m.content.startsWith('🔒') &&
+        !m.content.startsWith('🚀') && !m.content.startsWith('🧠')
+      );
+      const firstUserMsg = chatSnapshot.find(m => m.isUser);
+      const earlyName = firstUserMsg
+        ? firstUserMsg.content.slice(0, 40) + (firstUserMsg.content.length > 40 ? '...' : '')
+        : `Contract ${uid.slice(0, 8)}`;
+
+      const earlyProject: Project = {
+        uid,
+        name: earlyName,
+        status: 'generated',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        task: 'generate',
+        bummUid: uid,
+        code: '',
+      };
+      setCurrentProject(earlyProject);
+      updateProjects(prev => [earlyProject, ...prev.filter(p => p.uid !== uid)]);
+      apiClient.updateContract(uid, { name: earlyName }).catch(() => {});
+      const chatForBackend = chatSnapshot.map(m => ({
+        role: m.isUser ? 'user' : 'assistant',
+        content: m.content,
+        timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
+      }));
+      apiClient.saveContractChat(uid, chatForBackend).catch(() => {});
+
+      // Fetch generated code and enrich project
+      contract.getCode().then(result => {
+        setGeneratedCode({ projectUid: uid, code: result.code });
+        const richProject: Project = {
+          uid, name: earlyName, status: 'generated',
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+          task: 'generate', bummUid: uid, code: result.code,
+        };
+        setCurrentProject(richProject);
+        updateProjects(prev => [richProject, ...prev.filter(p => p.uid !== uid)]);
+        loadBalance().catch(() => {});
+        setActiveContractUid(null);
+      }).catch(() => setActiveContractUid(null));
+
+      setPipelineMsgId(null);
+    }
+
+    // [C] Build complete: build_ok just became true
+    if (!prev?.build_ok && curr.build_ok && activeContractUid) {
+      const uid = activeContractUid;
+      setCurrentProject(p => p?.uid === uid ? { ...p, status: 'built' } : p);
+      updateProjects(ps => ps.map(p => p.uid === uid ? { ...p, status: 'built' } : p));
+      // Fetch fixes and refresh code in background
+      (async () => {
+        const attempts = curr.build_attempt ?? 1;
+        const fixed = Math.max(0, attempts - 1);
+        try {
+          const data = await apiClient.getContractFixes(uid);
+          type FixItem = {
+            fix_description?: string;
+            error_pattern?: string;
+            source?: string;
+            was_successful?: boolean | null;
+          };
+          const fixes: FixItem[] = (data.fixes || []).filter(
+            (f: FixItem) => f.was_successful !== false
+          );
+          if (fixes.length > 0) {
+            // Group by source: KB hits vs LLM-generated
+            const kbCount = fixes.filter(f => f.source === 'knowledge_base').length;
+            const llmCount = fixes.length - kbCount;
+
+            const lines = fixes.slice(0, 8).map((f, i) => {
+              const pattern = (f.error_pattern || 'compile error').replace(/\n/g, ' ').slice(0, 80);
+              const desc = (f.fix_description || '').replace(/\n/g, ' ').slice(0, 200);
+              const tag = f.source === 'knowledge_base' ? '_(from KB)_' : '_(LLM)_';
+              return `${i + 1}. \`${pattern}\` → ${desc} ${tag}`;
+            }).join('\n');
+
+            const sourceBreakdown =
+              kbCount > 0 && llmCount > 0
+                ? ` (${kbCount} from KB, ${llmCount} LLM-generated)`
+                : kbCount > 0
+                ? ' (all from KB)'
+                : ' (all LLM-generated)';
+
+            addAIMessage(
+              `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}.\n\n` +
+              `🔧 **Auto-fixed ${fixes.length} compile error${fixes.length === 1 ? '' : 's'}**${sourceBreakdown}:\n\n` +
+              `${lines}` +
+              `${fixes.length > 8 ? `\n\n_…and ${fixes.length - 8} more._` : ''}\n\n` +
+              `Contract compiles cleanly. Click **Audit** to run security checks.`
+            );
+          } else {
+            addAIMessage(
+              fixed > 0
+                ? `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Auto-fixed ${fixed} compile error${fixed > 1 ? 's' : ''}.\n\nContract compiles cleanly. Click **Audit** to run security checks.`
+                : `✅ **Build succeeded on the first attempt** — contract compiles cleanly with no errors.\n\nClick **Audit** to run security checks.`
+            );
+          }
+        } catch {
+          addAIMessage(`✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Click **Audit** to continue.`);
+        }
+        // Refresh code (build may have patched the source)
+        try {
+          const result = await apiClient.getContractCode(uid);
+          if (result.code) {
+            setCurrentProject(p => p?.uid === uid ? { ...p, code: result.code } : p);
+            setGeneratedCode({ projectUid: uid, code: result.code });
+          }
+        } catch {}
+        loadBalance().catch(() => {});
+      })();
+    }
+
+    // [D] Audit complete: audit_ok just became true
+    if (!prev?.audit_ok && curr.audit_ok && activeContractUid) {
+      const uid = activeContractUid;
+      setCurrentProject(p => p?.uid === uid ? { ...p, status: 'audited' } : p);
+      updateProjects(ps => ps.map(p => p.uid === uid ? { ...p, status: 'audited' } : p));
+      (async () => {
+        try {
+          // Fetch BOTH audit findings and the cumulative build fixes so we can render
+          // a complete "what was changed before deploy" summary in the chat.
+          const [auditData, fixesData] = await Promise.all([
+            apiClient.getContractAudit(uid),
+            apiClient.getContractFixes(uid).catch(() => ({ fixes: [] })),
+          ]);
+          type Vuln = {
+            severity?: string;
+            category?: string;
+            title?: string;
+            description?: string;
+            suggested_fix?: string | null;
+            code_location?: string | null;
+            source?: string;
+          };
+          const vulns: Vuln[] = auditData.vulns || [];
+          const attempts = curr.audit_attempt ?? 1;
+          const buildFixCount = ((fixesData?.fixes || []) as Array<{ was_successful?: boolean | null }>)
+            .filter(f => f.was_successful !== false).length;
+
+          if (vulns.length === 0) {
+            addAIMessage(
+              `🛡️ **Audit passed on the first try** — no security issues found.\n\n` +
+              `📋 **Final state before deploy:**\n` +
+              `• Static analysis: clippy + cargo audit ✅\n` +
+              `• AI security review: ✅\n` +
+              `${buildFixCount > 0 ? `• Build fixes applied earlier: ${buildFixCount}\n` : ''}` +
+              `\nContract is ready to deploy. Click **Publish** to deploy to Solana devnet.`
+            );
+          } else {
+            // Group vulnerabilities by severity
+            const SEV_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
+            const SEV_LABELS: Record<string, string> = {
+              critical: '🔴 CRITICAL',
+              high:     '🟠 HIGH',
+              medium:   '🟡 MEDIUM',
+              low:      '🔵 LOW',
+              info:     '⚪ INFO',
+            };
+            const grouped: Record<string, Vuln[]> = {};
+            for (const v of vulns) {
+              const sev = (v.severity || 'info').toLowerCase();
+              if (!grouped[sev]) grouped[sev] = [];
+              grouped[sev].push(v);
+            }
+
+            const sections: string[] = [];
+            for (const sev of SEV_ORDER) {
+              const items = grouped[sev];
+              if (!items || items.length === 0) continue;
+              const label = SEV_LABELS[sev] || sev.toUpperCase();
+              const lines = items.slice(0, 5).map((v, i) => {
+                const title = (v.title || 'Finding').replace(/\n/g, ' ').slice(0, 120);
+                const desc = (v.description || '').replace(/\n/g, ' ').slice(0, 220);
+                const fix = v.suggested_fix
+                  ? `\n  ↳ **Fix applied:** ${v.suggested_fix.replace(/\n/g, ' ').slice(0, 220)}`
+                  : '';
+                const loc = v.code_location ? ` _(at ${v.code_location})_` : '';
+                return `${i + 1}. **${title}**${loc}\n  ${desc}${fix}`;
+              }).join('\n\n');
+              const more = items.length > 5 ? `\n\n_…and ${items.length - 5} more in this severity._` : '';
+              sections.push(`**${label} (${items.length})**\n\n${lines}${more}`);
+            }
+
+            addAIMessage(
+              `🛡️ **Audit complete** after ${attempts} pass${attempts > 1 ? 'es' : ''} — ` +
+              `found and patched **${vulns.length}** issue${vulns.length === 1 ? '' : 's'}.\n\n` +
+              `🔍 **Vulnerabilities found and fixed:**\n\n` +
+              `${sections.join('\n\n')}\n\n` +
+              `📋 **Final state before deploy:**\n` +
+              `${buildFixCount > 0 ? `• Compile-time fixes: **${buildFixCount}**\n` : ''}` +
+              `• Security fixes: **${vulns.length}**\n` +
+              `• Static analysis: clippy + cargo audit ✅\n` +
+              `• AI security review: ✅\n\n` +
+              `Contract is ready to deploy. Click **Publish** to deploy to Solana devnet.`
+            );
+          }
+        } catch {
+          addAIMessage(`🛡️ **Audit complete.** Contract is ready for deployment. Click **Publish** to deploy.`);
+        }
+        loadBalance().catch(() => {});
+      })();
+    }
+
+    // [E] Deploy complete: program_id just appeared
+    if (!prev?.program_id && curr.program_id && activeContractUid) {
+      const uid = activeContractUid;
+      const pid = curr.program_id;
+      setCurrentProject(p => p?.uid === uid
+        ? { ...p, status: 'deployed', isDeployed: true, contractAddress: pid }
+        : p);
+      updateProjects(ps => ps.map(p => p.uid === uid
+        ? { ...p, status: 'deployed', isDeployed: true, contractAddress: pid }
+        : p));
+      addAIMessage(
+        `🚀 **Deployed to Solana!** Program ID: \`${pid}\`\n\nView on Explorer: https://explorer.solana.com/address/${pid}?cluster=devnet`
+      );
+      setPipelineMsgId(null);
+      setActiveContractUid(null);
+      loadBalance().catch(() => {});
+    }
+
+    // [F] Pipeline failed
+    if (curr.phase === 'failed' && prev?.phase !== 'failed') {
+      addAIMessage(`❌ **Pipeline failed:** ${curr.error ?? 'Unknown error'}`);
+      setPipelineMsgId(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contract.status]);
 
   // ── Helper: save project to backend + localStorage cache ─────────────────
   const saveProject = useCallback((project: Project) => {
@@ -232,200 +525,6 @@ export default function Dashboard() {
     loadProjectsFromBackend();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.isAuthenticated]);
-
-  // ── WebSocket phase watcher ─────────────────────────────────────────────────
-  // Track whether we've already created the project for this contract uid
-  // so step-mode WS heartbeats don't re-trigger project creation.
-  const projectCreatedRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!contract.status) return;
-    const { phase, error, next_step } = contract.status;
-
-    // Only update animation phase while something is actively running.
-    // WS sends heartbeats every 2 s; without this guard the heartbeats
-    // re-set pipelinePhase back to 'building' AFTER the completion watcher
-    // clears it, making the BuildStages animation hang forever.
-    const stepActive = pipelineStepRunning === 'running' || pipelineStepRunning === 'triggering';
-    if (pipelineMsgId || stepActive) {
-      setPipelinePhase(phase);
-    }
-
-    if (!pipelineMsgId) return;
-
-    // ── Step-mode: generate is done when next_step === 'build' ──────────────
-    // The pipeline has paused before the build node. Create the project now
-    // and show the "ready to build" message. Only do this once per contract.
-    const generateDone =
-      next_step === 'build' && activeContractUid &&
-      projectCreatedRef.current !== activeContractUid;
-
-    const labels: Record<string, string> = {
-      pending:          '⏳ Queued — waiting for worker...',
-      enriching:        '🔍 Analyzing your request...',
-      generating:       generateDone
-                          ? '✅ Contract generated! Click Build to compile.'
-                          : '⚡ Generating Solana smart contract...',
-      generated:        '📋 Code ready — click Build to compile.',
-      building:         '🔧 Building with Anchor framework...',
-      build_fixing:     '🔧 Fixing build errors...',
-      auditing_static:  '🔒 Running static security audit...',
-      auditing_llm:     '🔒 Running AI security review...',
-      audit_fixing:     '🔒 Fixing security issues...',
-      deploying:        '🚀 Deploying to devnet...',
-      learning:         '🧠 Updating knowledge base...',
-      done:             '✅ Contract deployed! View the program address.',
-      failed:           `❌ Pipeline failed: ${error ?? 'Unknown error'}`,
-    };
-
-    setMessages(prev =>
-      prev.map(m =>
-        m.id === pipelineMsgId
-          ? { ...m, content: labels[phase] ?? `⚙️ ${phase}...` }
-          : m
-      )
-    );
-
-    // Helper: build a project record and save it
-    const createProjectFromCode = (uid: string, code: string) => {
-      const chatSnapshot = messages.filter(m =>
-        !m.content.startsWith('⏳') && !m.content.startsWith('⚙️') &&
-        !m.content.startsWith('🔍') && !m.content.startsWith('⚡') &&
-        !m.content.startsWith('🔧') && !m.content.startsWith('🔒') &&
-        !m.content.startsWith('🚀') && !m.content.startsWith('🧠')
-      );
-      const firstUserMsg = chatSnapshot.find(m => m.isUser);
-      const projectName = firstUserMsg
-        ? firstUserMsg.content.slice(0, 40) + (firstUserMsg.content.length > 40 ? '...' : '')
-        : `Contract ${uid.slice(0, 8)}`;
-
-      const newProject: Project = {
-        uid,
-        name: projectName,
-        status: 'generated',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        task: 'generate',
-        bummUid: uid,
-        code,
-      };
-      setCurrentProject(newProject);
-      updateProjects(prev => [newProject, ...prev.filter(p => p.uid !== uid)]);
-      saveProject(newProject);
-      projectCreatedRef.current = uid;
-
-      // Persist to backend
-      apiClient.updateContract(uid, { name: projectName }).catch(() => {});
-      const chatForBackend = chatSnapshot.map(m => ({
-        role: m.isUser ? 'user' : 'assistant',
-        content: m.content,
-        timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
-      }));
-      apiClient.saveContractChat(uid, chatForBackend).catch(() => {});
-      if (typeof window !== 'undefined') {
-        try { localStorage.setItem(`bumm_chat_history_${uid}`, JSON.stringify(chatSnapshot)); } catch (_) {}
-      }
-    };
-
-    // ── Step-mode: generate done → create project and stop watching ─────────
-    if (generateDone) {
-      const uid = activeContractUid!;
-      // Guard BEFORE async work to prevent double-trigger from WS heartbeats
-      projectCreatedRef.current = uid;
-
-      // Create project shell immediately — sidebar updates right away,
-      // Build button appears, no waiting for code fetch
-      const chatSnapshot = messages.filter(m =>
-        !m.content.startsWith('⏳') && !m.content.startsWith('⚙️') &&
-        !m.content.startsWith('🔍') && !m.content.startsWith('⚡') &&
-        !m.content.startsWith('🔧') && !m.content.startsWith('🔒') &&
-        !m.content.startsWith('🚀') && !m.content.startsWith('🧠')
-      );
-      const firstUserMsg = chatSnapshot.find(m => m.isUser);
-      const earlyName = firstUserMsg
-        ? firstUserMsg.content.slice(0, 40) + (firstUserMsg.content.length > 40 ? '...' : '')
-        : `Contract ${uid.slice(0, 8)}`;
-      const earlyProject: Project = {
-        uid,
-        name: earlyName,
-        status: 'generated',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        task: 'generate',
-        bummUid: uid,
-        code: '',
-      };
-      setCurrentProject(earlyProject);
-      updateProjects(prev => [earlyProject, ...prev.filter(p => p.uid !== uid)]);
-      // Do NOT saveProject(earlyProject) — code is empty, would create a ghost in localStorage
-      apiClient.updateContract(uid, { name: earlyName }).catch(() => {});
-
-      // Fetch the generated code and enrich the project
-      contract.getCode().then(result => {
-        setGeneratedCode({ projectUid: uid, code: result.code });
-        createProjectFromCode(uid, result.code);
-        loadBalance().catch(() => {});
-        setPipelinePhase(null);
-        // Clear WS target only after code is loaded — otherwise useContract(uid→null)
-        // resets state and races with setGeneratedCode (empty preview).
-        setActiveContractUid(null);
-      }).catch(err => {
-        console.error('Failed to load generated code:', err);
-        setPipelinePhase(null);
-        setActiveContractUid(null);
-      });
-      // Stop status line updates; keep activeContractUid until getCode() finishes (see .then above).
-      setPipelineMsgId(null);
-    } else if (phase === 'done') {
-      // Full pipeline done (API mode) OR deploy done (step mode)
-      const uid = activeContractUid!;
-      if (projectCreatedRef.current !== uid) {
-        // Full auto-pipeline (API mode): create project now
-        contract.getCode().then(result => {
-          setGeneratedCode({ projectUid: uid, code: result.code });
-          createProjectFromCode(uid, result.code);
-          loadBalance().catch(() => {});
-          setPipelinePhase(null);
-          setActiveContractUid(null);
-        }).catch(err => {
-          console.error('Failed to load generated code:', err);
-          setActiveContractUid(null);
-        });
-        setPipelineMsgId(null);
-      } else {
-        // Step mode: pipeline finished — only "deployed" if we have a program_id
-        const pid = contract.status?.program_id;
-        const deployed = Boolean(pid);
-        setCurrentProject(prev => prev
-          ? {
-              ...prev,
-              status: deployed ? 'deployed' : 'completed',
-              isDeployed: deployed,
-              contractAddress: pid ?? undefined,
-            }
-          : prev);
-        updateProjects(prev => prev.map(p =>
-          p.uid === uid
-            ? {
-                ...p,
-                status: deployed ? 'deployed' : 'completed',
-                isDeployed: deployed,
-                contractAddress: pid ?? undefined,
-              }
-            : p
-        ));
-        setPipelinePhase(null);
-        setPipelineMsgId(null);
-        setActiveContractUid(null);
-      }
-    } else if (phase === 'failed') {
-      setGenerationAttemptFailed(prev => prev + 1);
-      setPipelineMsgId(null);
-      setActiveContractUid(null);
-      setPipelinePhase(null);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contract.status]);
 
   // ── Helper: launch the pipeline with an enriched prompt ──────────────────
   const launchPipeline = useCallback(async (enrichedPrompt: string) => {
@@ -831,179 +930,38 @@ export default function Dashboard() {
     [auth.isAuthenticated, contract],
   );
 
-  // ── Inline step trigger (Build / Audit / Deploy) ────────────────────────
-  // Invoked by ChatScreen's SmartActionButton.  Reconnects WS to the current
-  // project (if not already), fires the step endpoint, and starts waiting for
-  // WS phase updates to drive animations inside the Smart Contract Preview.
+  // ── Step trigger — fire-and-forget (no local state mirrors) ─────────────
+  // All completion handling is done by the transition effect watching contract.status.
   const handleStartStep = useCallback(
     async (step: 'build' | 'audit' | 'deploy') => {
+      // Guard: if we already fired a step and are waiting for WS confirmation, ignore.
+      if (pendingStepRef.current) return;
+
       const uid = currentProject?.bummUid ?? currentProject?.uid;
       if (!uid) {
-        setPipelineStepError('No active project — create one first.');
-        setPipelineStepRunning('error');
+        addAIMessage('❌ No active project — create one first.');
         return;
       }
 
-      setPipelineStepRunning('triggering');
-      setPipelineStepError(null);
-      triggeredStepRef.current = step;
-
-      // Make sure the WS subscription is pointed at this project so that
-      // phase updates (building → build_fixing → paused, etc.) stream in.
+      // Immediately show loader — no waiting for WS heartbeat
+      setPendingStep(step);
+      // Ensure WS is connected to this project
       setActiveContractUid(uid);
-
       try {
         await tryRefresh();
         if (step === 'build')  await apiClient.triggerBuild(uid);
         if (step === 'audit')  await apiClient.triggerAudit(uid);
         if (step === 'deploy') await apiClient.triggerDeploy(uid);
-        setPipelineStepRunning('running');
       } catch (err) {
-        const msg = err instanceof Error ? err.message : `Failed to start ${step}`;
-        setPipelineStepError(msg);
-        setPipelineStepRunning('error');
-        triggeredStepRef.current = null;
-        console.error(`handleStartStep(${step}) error:`, err);
+        setPendingStep(null); // restore button so user can retry
+        addAIMessage(`❌ Failed to start ${step}: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
     },
     [currentProject],
   );
 
-  // ── Completion watcher for inline step triggers ──────────────────────────
-  // We rely on the *_ok flags / program_id (not phase category) because e.g.
-  // the build node leaves phase='building' even after pausing at audit.
-  useEffect(() => {
-    if (pipelineStepRunning !== 'running') return;
-    if (!contract.status) return;
-    const step = triggeredStepRef.current;
-    if (!step) return;
-
-    if (contract.status.phase === 'failed') {
-      const errMsg = contract.status.error ?? 'Pipeline failed';
-      setPipelineStepError(errMsg);
-      setPipelineStepRunning('error');
-      setPipelinePhase(null);
-      // Emit a prominent chat message so the user sees the failure in the chat log
-      const stepLabel = step === 'build' ? 'Build' : step === 'audit' ? 'Audit' : 'Deploy';
-      addAIMessage(`❌ **${stepLabel} failed:** ${errMsg}`);
-      triggeredStepRef.current = null;
-      return;
-    }
-
-    const done =
-      (step === 'build'  && contract.status.build_ok)                ||
-      (step === 'audit'  && contract.status.audit_ok)                ||
-      (step === 'deploy' && !!contract.status.program_id);
-    if (!done) return;
-
-    const pid = contract.status.program_id ?? undefined;
-    const uid = currentProject?.uid ?? activeContractUid;
-
-    // Update the current project to reflect the new stage so the action
-    // button in ChatScreen advances to the next step automatically.
-    if (uid) {
-      setCurrentProject(prev => prev && prev.uid === uid
-        ? {
-            ...prev,
-            status: step === 'deploy' ? 'deployed'
-                    : step === 'audit' ? 'audited'
-                    : 'built',
-            isDeployed: step === 'deploy' ? true : prev.isDeployed,
-            contractAddress: pid ?? prev.contractAddress,
-          }
-        : prev);
-      updateProjects(prev => prev.map(p => p.uid === uid
-        ? {
-            ...p,
-            status: step === 'deploy' ? 'deployed'
-                    : step === 'audit' ? 'audited'
-                    : 'built',
-            isDeployed: step === 'deploy' ? true : p.isDeployed,
-            contractAddress: pid ?? p.contractAddress,
-          }
-        : p));
-    }
-
-    // Emit stylized chat summary for the finished step.
-    // Uses apiClient (which goes through the Next.js proxy with correct
-    // /api/v1/ prefix + auth headers) instead of raw fetch().
-    if (step === 'build' && uid) {
-      const attempts = contract.status.build_attempt ?? 1;
-      const fixed = Math.max(0, attempts - 1);
-      (async () => {
-        try {
-          const data = await apiClient.getContractFixes(uid);
-          const fixes = (data.fixes || []).filter(f => f.was_successful !== false);
-          if (fixes.length > 0) {
-            const list = fixes.slice(0, 6).map((f, i) =>
-              `${i + 1}. ${f.fix_description}${f.source === 'knowledge_base' ? ' *(from KB)*' : ''}`
-            ).join('\n');
-            addAIMessage(
-              `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Auto-applied **${fixes.length}** fix${fixes.length === 1 ? '' : 'es'}:\n\n${list}${fixes.length > 6 ? `\n…and ${fixes.length - 6} more.` : ''}`
-            );
-            return;
-          }
-        } catch {
-          // /fixes endpoint may not exist yet or contract has no fixes — fall through
-        }
-        addAIMessage(
-          fixed > 0
-            ? `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Auto-fixed ${fixed} compile error${fixed > 1 ? 's' : ''} along the way — the contract now compiles cleanly.`
-            : `✅ **Build succeeded** on the first attempt. The contract compiles cleanly with no errors.`
-        );
-      })();
-    } else if (step === 'audit' && uid) {
-      (async () => {
-        try {
-          const data = await apiClient.getContractAudit(uid);
-          const vulns: Array<{ severity?: string; title?: string; description?: string }> = data.vulns || [];
-          const attempts = contract.status?.audit_attempt ?? 1;
-          if (vulns.length === 0) {
-            addAIMessage(`🛡️ **Audit passed** — no critical or high-severity issues found. Contract is ready to deploy.`);
-          } else {
-            const list = vulns.slice(0, 8).map((v, i) =>
-              `${i + 1}. **[${(v.severity || 'info').toUpperCase()}]** ${v.title || 'Finding'}${v.description ? ` — ${v.description}` : ''}`
-            ).join('\n');
-            addAIMessage(
-              `🛡️ **Audit complete** (${attempts} pass${attempts > 1 ? 'es' : ''}). Found and patched **${vulns.length}** vulnerabilit${vulns.length === 1 ? 'y' : 'ies'}:\n\n${list}${vulns.length > 8 ? `\n…and ${vulns.length - 8} more.` : ''}\n\nAll critical/high findings were auto-fixed and the contract was rebuilt successfully.`
-            );
-          }
-        } catch {
-          addAIMessage(`🛡️ **Audit complete.** Contract is ready for deployment.`);
-        }
-      })();
-    } else if (step === 'deploy') {
-      addAIMessage(
-        `🚀 **Deployed to Solana!** Program ID: \`${pid}\`\n\nView on Explorer: https://explorer.solana.com/address/${pid}?cluster=devnet`
-      );
-    }
-
-    // Always clear the phase so the editor animation resets between steps.
-    // Without this the BuildStages animation stays rendered after build finishes,
-    // blocking AuditStages from appearing when the user clicks Audit.
-    setPipelinePhase(null);
-    setPipelineStepRunning('idle');
-    triggeredStepRef.current = null;
-
-    // After build: re-fetch code from backend so the editor shows the
-    // auto-fixed version (build node may have patched compile errors in the source).
-    if (step === 'build' && uid) {
-      apiClient.getContractCode(uid).then(result => {
-        if (result.code) {
-          setCurrentProject(prev =>
-            prev && prev.uid === uid ? { ...prev, code: result.code } : prev,
-          );
-          setGeneratedCode({ projectUid: uid, code: result.code });
-        }
-      }).catch(() => {});
-    }
-
-    // Tear down the WS subscription only after deploy (for build → audit →
-    // deploy the same connection is reused).
-    if (step === 'deploy') {
-      setActiveContractUid(null);
-    }
-  }, [contract.status, pipelineStepRunning, currentProject, activeContractUid, updateProjects]);
+  // ── Computed UI state (no useState — pure derivation every render) ────────
+  const ui = deriveUIFromStatus(contract.status, !!(currentProject?.code?.trim()), pendingStep);
 
   // Project management functions
   const handleSelectProject = async (project: Project) => {
@@ -1247,10 +1205,9 @@ export default function Dashboard() {
             generatedCode={generatedCode}
             onGeneratedCodeApplied={() => setGeneratedCode(null)}
             generationAttemptFailed={generationAttemptFailed}
-            pipelinePhase={pipelinePhase}
+            buttonState={ui.buttonState}
+            animationStage={ui.animationStage}
             onStartStep={handleStartStep}
-            pipelineStepRunning={pipelineStepRunning}
-            pipelineStepError={pipelineStepError}
           />
         );
       
