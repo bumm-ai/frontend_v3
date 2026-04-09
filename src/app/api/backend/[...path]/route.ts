@@ -29,6 +29,14 @@ export async function PUT(
   return handleRequest(request, resolvedParams.path, 'PUT');
 }
 
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
+  const resolvedParams = await params;
+  return handleRequest(request, resolvedParams.path, 'PATCH');
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
