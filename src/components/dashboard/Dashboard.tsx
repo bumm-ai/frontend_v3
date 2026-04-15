@@ -8,7 +8,7 @@ import { useBummApi } from '@/hooks/useBummApi';
 import { useCredits } from '@/hooks/useCredits';
 import { useAuth } from '@/hooks/useAuth';
 import { useAnalytics } from '@/hooks/useAnalytics';
-import { useContract, deriveUIFromStatus } from '@/hooks/useContract';
+import { useContract, useMultiContract, deriveUIFromStatus } from '@/hooks/useContract';
 import { apiClient } from '@/services/api';
 import { tryRefresh } from '@/services/authService';
 import type { ChatMessagePayload } from '@/lib/api';
@@ -70,6 +70,18 @@ export default function Dashboard() {
   const [activeContractUid, setActiveContractUid] = useState<string | null>(null);
   const [pipelineMsgId, setPipelineMsgId] = useState<string | null>(null);
   const contract = useContract(activeContractUid);
+
+  // Per-project status map — updated by useMultiContract for background projects
+  const [projectStatuses, setProjectStatuses] = useState<Record<string, import('@/lib/api').ContractStatus>>({});
+  // trackedContracts: { [projectId]: contractUid } — only projects with an active WS
+  const [trackedContracts, setTrackedContracts] = useState<Record<string, string>>({});
+  // Stable ref so REST poll always reads the latest trackedContracts without restarting interval
+  const trackedContractsRef = useRef<Record<string, string>>({});
+  trackedContractsRef.current = trackedContracts;
+
+  useMultiContract(trackedContracts, (projectId, status) => {
+    setProjectStatuses(prev => ({ ...prev, [projectId]: status }));
+  });
 
   // API хук (compat stubs for project management UI)
   const {
@@ -170,15 +182,73 @@ export default function Dashboard() {
   // ── Optimistic step pending state ────────────────────────────────────────
   // Set immediately on button click → clears when WS confirms phase is active.
   // Prevents double-clicks during the gap between HTTP trigger and first heartbeat.
-  const [pendingStep, setPendingStep] = useState<'build' | 'audit' | 'deploy' | null>(null);
+  // Scoped to a specific project so switching projects never leaks a pending animation
+  const [pendingStep, setPendingStep] = useState<{
+    projectId: string;
+    step: 'build' | 'audit' | 'deploy';
+  } | null>(null);
   const pendingStepRef = useRef(pendingStep); // always-current copy for use inside effects
   pendingStepRef.current = pendingStep;
+
+  // ── Terminal/confirming cleanup from multiContract WS ─────────────────────
+  // Expand the useMultiContract callback so terminal phases clean up immediately
+  // without waiting for the single-WS status-effect to fire.
+  useEffect(() => {
+    // This runs whenever projectStatuses updates (multiContract WS delivered a message).
+    // Mirror of status-effect [0] for pendingStep, so clearing happens from EITHER WS.
+    if (!pendingStep) return;
+    const status = projectStatuses[pendingStep.projectId];
+    if (!status) return;
+    const { step } = pendingStep;
+    if (
+      (step === 'build'  && (status.build_ok || status.phase === 'building' || status.phase === 'build_fixing' || status.phase === 'learning')) ||
+      (step === 'audit'  && (status.audit_ok || status.phase === 'auditing_static' || status.phase === 'auditing_llm' || status.phase === 'audit_fixing')) ||
+      (step === 'deploy' && (!!status.program_id || status.phase === 'deploying'))
+    ) {
+      setPendingStep(null);
+    }
+    // Terminal: clean up trackedContracts so multiContract WS stops for this project
+    if (status.phase === 'done' || status.phase === 'failed') {
+      const pid = pendingStep.projectId;
+      setTrackedContracts(prev => { const n = { ...prev }; delete n[pid]; return n; });
+    }
+  }, [projectStatuses, pendingStep]);
+
+  // ── REST API fallback poll ────────────────────────────────────────────────
+  // Single interval polls ALL trackedContracts simultaneously.
+  // Reads from trackedContractsRef so deps never change — avoids the bug where
+  // activeContractUid + currentProject?.uid mismatch writes the wrong project's
+  // status into the wrong slot when the user switches projects mid-pipeline.
+  useEffect(() => {
+    const poll = async () => {
+      const entries = Object.entries(trackedContractsRef.current);
+      if (entries.length === 0) return;
+      await Promise.all(entries.map(async ([pid, cuid]) => {
+        try {
+          const status = await apiClient.getContractStatus(cuid);
+          setProjectStatuses(prev => ({ ...prev, [pid]: status }));
+          if (status.phase === 'done' || status.phase === 'failed') {
+            setTrackedContracts(prev => { const n = { ...prev }; delete n[pid]; return n; });
+            setPendingStep(prev => prev?.projectId === pid ? null : prev);
+          }
+        } catch { /* WS is primary; REST is last-resort */ }
+      }));
+    };
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Transition detector: previous status ref ──────────────────────────────
   // Used to detect *changes* in ok flags / program_id / next_step
   // without any local state mirrors. This is the ONLY effect watching contract.status.
   const prevStatusRef = useRef<typeof contract.status>(null);
   const projectCreatedRef = useRef<string | null>(null);
+
+  // Stable ref so transition effects [C-F] can read the currently-viewed project
+  // without being listed as useEffect dependencies (avoids stale-closure bugs).
+  const currentProjectRef = useRef(currentProject);
+  currentProjectRef.current = currentProject;
 
   useEffect(() => {
     if (!contract.status) return;
@@ -187,7 +257,8 @@ export default function Dashboard() {
     prevStatusRef.current = curr;
 
     // [0] Clear pendingStep once backend confirms the step is active or complete
-    const pending = pendingStepRef.current;
+    const pendingEntry = pendingStepRef.current;
+    const pending = pendingEntry?.step ?? null;
     if (pending === 'build' && (curr.build_ok ||
         curr.phase === 'building' || curr.phase === 'build_fixing' || curr.phase === 'learning')) {
       setPendingStep(null);
@@ -279,13 +350,19 @@ export default function Dashboard() {
         updateProjects(prev => [richProject, ...prev.filter(p => p.uid !== uid)]);
         loadBalance().catch(() => {});
         setActiveContractUid(null);
-      }).catch(() => setActiveContractUid(null));
+        setTrackedContracts(prev => { const next = { ...prev }; delete next[uid]; return next; });
+      }).catch(() => {
+        setActiveContractUid(null);
+        setTrackedContracts(prev => { const next = { ...prev }; delete next[uid]; return next; });
+      });
 
       setPipelineMsgId(null);
     }
 
     // [C] Build complete: build_ok just became true
-    if (!prev?.build_ok && curr.build_ok && activeContractUid) {
+    // Guard: prev must be non-null — if prev is null this is the first WS message
+    // (connecting to an already-built project), not a real transition.
+    if (prev && !prev.build_ok && curr.build_ok && activeContractUid) {
       const uid = activeContractUid;
       setCurrentProject(p => p?.uid === uid ? { ...p, status: 'built' } : p);
       updateProjects(ps => ps.map(p => p.uid === uid ? { ...p, status: 'built' } : p));
@@ -323,7 +400,8 @@ export default function Dashboard() {
                 ? ' (all from KB)'
                 : ' (all LLM-generated)';
 
-            addAIMessage(
+            addAIMessageForProject(
+              uid,
               `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}.\n\n` +
               `🔧 **Auto-fixed ${fixes.length} compile error${fixes.length === 1 ? '' : 's'}**${sourceBreakdown}:\n\n` +
               `${lines}` +
@@ -331,14 +409,15 @@ export default function Dashboard() {
               `Contract compiles cleanly. Click **Audit** to run security checks.`
             );
           } else {
-            addAIMessage(
+            addAIMessageForProject(
+              uid,
               fixed > 0
                 ? `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Auto-fixed ${fixed} compile error${fixed > 1 ? 's' : ''}.\n\nContract compiles cleanly. Click **Audit** to run security checks.`
                 : `✅ **Build succeeded on the first attempt** — contract compiles cleanly with no errors.\n\nClick **Audit** to run security checks.`
             );
           }
         } catch {
-          addAIMessage(`✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Click **Audit** to continue.`);
+          addAIMessageForProject(uid, `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Click **Audit** to continue.`);
         }
         // Refresh code (build may have patched the source)
         try {
@@ -353,7 +432,8 @@ export default function Dashboard() {
     }
 
     // [D] Audit complete: audit_ok just became true
-    if (!prev?.audit_ok && curr.audit_ok && activeContractUid) {
+    // Guard: prev must be non-null — first WS message must not trigger this.
+    if (prev && !prev.audit_ok && curr.audit_ok && activeContractUid) {
       const uid = activeContractUid;
       setCurrentProject(p => p?.uid === uid ? { ...p, status: 'audited' } : p);
       updateProjects(ps => ps.map(p => p.uid === uid ? { ...p, status: 'audited' } : p));
@@ -380,7 +460,8 @@ export default function Dashboard() {
             .filter(f => f.was_successful !== false).length;
 
           if (vulns.length === 0) {
-            addAIMessage(
+            addAIMessageForProject(
+              uid,
               `🛡️ **Audit passed on the first try** — no security issues found.\n\n` +
               `📋 **Final state before deploy:**\n` +
               `• Static analysis: clippy + cargo audit ✅\n` +
@@ -423,7 +504,8 @@ export default function Dashboard() {
               sections.push(`**${label} (${items.length})**\n\n${lines}${more}`);
             }
 
-            addAIMessage(
+            addAIMessageForProject(
+              uid,
               `🛡️ **Audit complete** after ${attempts} pass${attempts > 1 ? 'es' : ''} — ` +
               `found and patched **${vulns.length}** issue${vulns.length === 1 ? '' : 's'}.\n\n` +
               `🔍 **Vulnerabilities found and fixed:**\n\n` +
@@ -437,14 +519,15 @@ export default function Dashboard() {
             );
           }
         } catch {
-          addAIMessage(`🛡️ **Audit complete.** Contract is ready for deployment. Click **Publish** to deploy.`);
+          addAIMessageForProject(uid, `🛡️ **Audit complete.** Contract is ready for deployment. Click **Publish** to deploy.`);
         }
         loadBalance().catch(() => {});
       })();
     }
 
     // [E] Deploy complete: program_id just appeared
-    if (!prev?.program_id && curr.program_id && activeContractUid) {
+    // Guard: prev must be non-null — first WS message must not trigger this.
+    if (prev && !prev.program_id && curr.program_id && activeContractUid) {
       const uid = activeContractUid;
       const pid = curr.program_id;
       setCurrentProject(p => p?.uid === uid
@@ -453,17 +536,21 @@ export default function Dashboard() {
       updateProjects(ps => ps.map(p => p.uid === uid
         ? { ...p, status: 'deployed', isDeployed: true, contractAddress: pid }
         : p));
-      addAIMessage(
+      addAIMessageForProject(
+        uid,
         `🚀 **Deployed to Solana!** Program ID: \`${pid}\`\n\nView on Explorer: https://explorer.solana.com/address/${pid}?cluster=devnet`
       );
       setPipelineMsgId(null);
       setActiveContractUid(null);
+      setTrackedContracts(prev => { const next = { ...prev }; delete next[uid]; return next; });
       loadBalance().catch(() => {});
     }
 
     // [F] Pipeline failed
-    if (curr.phase === 'failed' && prev?.phase !== 'failed') {
-      addAIMessage(`❌ **Pipeline failed:** ${curr.error ?? 'Unknown error'}`);
+    // Guard: prev must be non-null — connecting to an already-failed project
+    // (e.g. deploy ran out of funds earlier) must not re-add a failure message.
+    if (prev && curr.phase === 'failed' && prev.phase !== 'failed' && activeContractUid) {
+      addAIMessageForProject(activeContractUid, `❌ **Pipeline failed:** ${curr.error ?? 'Unknown error'}`);
       setPipelineMsgId(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -658,6 +745,47 @@ export default function Dashboard() {
     setMessages(prev => [...prev, aiMessage]);
   };
 
+  /**
+   * Send an AI message scoped to a specific project uid.
+   *
+   * • If the user is currently viewing that project → append to live chat (setMessages).
+   * • Otherwise → persist silently to localStorage so the message appears the
+   *   next time the user opens that project (handleSelectProject loads from there).
+   *   Also fire-and-forget backend save so the message survives a page refresh.
+   */
+  const addAIMessageForProject = useCallback((projectUid: string, content: string) => {
+    const viewed = currentProjectRef.current;
+    const isViewing = viewed && (viewed.bummUid ?? viewed.uid) === projectUid;
+
+    const msg: ChatMessage = {
+      id: generateUniqueMessageId(),
+      content,
+      timestamp: new Date(),
+      isUser: false,
+    };
+
+    if (isViewing) {
+      // User sees this project right now — show immediately
+      setMessages(prev => [...prev, msg]);
+    } else {
+      // Background project: stash in localStorage so it appears on next switch
+      try {
+        const key = `bumm_chat_history_${projectUid}`;
+        const existing: ChatMessage[] = JSON.parse(localStorage.getItem(key) || '[]');
+        localStorage.setItem(key, JSON.stringify([...existing, msg]));
+      } catch { /* storage full — drop silently */ }
+      // Also try to persist to backend (best-effort, fire-and-forget)
+      apiClient.getContractChat(projectUid).then(res => {
+        const prev = (res.messages || []) as Array<{ role: string; content: string; timestamp?: string }>;
+        return apiClient.saveContractChat(projectUid, [
+          ...prev,
+          { role: 'assistant', content, timestamp: msg.timestamp.toISOString() },
+        ]);
+      }).catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
 
   const addUserMessage = (content: string) => {
     const userMessage: ChatMessage = {
@@ -831,42 +959,26 @@ export default function Dashboard() {
     }
   };
 
-  const handleCreateNew = async () => {
+  const handleCreateNew = () => {
     if (!auth.isAuthenticated) return;
-    
-    try {
-      console.log(`Creating new project manually...`);
-      
-      // Create empty project (without automatic contract generation)
-      const projectName = `Project ${projects.length + 1}`;
-      const newProject = await createProject(projectName);
-      setCurrentProject(newProject);
-      
-      // Analytics tracking
-      analytics.trackProjectCreate(projectName);
-      
-      // Clear chat for new project
-      setMessages([]);
-      
-      // Add welcome message
-      const welcomeMessage: ChatMessage = {
-        id: generateUniqueMessageId(),
-        content: `🆕 New project "${projectName}" created! Describe what smart contract you'd like to build.`,
-        timestamp: new Date(),
-        isUser: false
-      };
-      setMessages(prev => [...prev, welcomeMessage]);
-      
-    } catch (err) {
-      console.error('Failed to create new project:', err);
-      const errorMessage: ChatMessage = {
-      id: Date.now().toString(),
-        content: `Failed to create new project: ${err instanceof Error ? err.message : 'Unknown error'}`,
+
+    // Reset to blank-slate state — a real contract UID is assigned only after
+    // the user sends their first prompt (createContract returns the real UUID).
+    // We intentionally do NOT call useBummApi.createProject here because it
+    // returns a stub-${Date.now()} uid that would cause 500 errors if the
+    // frontend ever tried to save chat history or status for it.
+    setCurrentProject(null);
+    setActiveContractUid(null);
+    // Clear UI-only optimistic state so the new blank project starts clean.
+    // NOTE: we do NOT touch trackedContracts — background pipelines keep running.
+    setPendingStep(null);
+    setPipelineMsgId(null);
+    setMessages([{
+      id: generateUniqueMessageId(),
+      content: `🆕 New project created! Describe what smart contract you'd like to build.`,
       timestamp: new Date(),
-      isUser: false
-    };
-      setMessages(prev => [...prev, errorMessage]);
-    }
+      isUser: false,
+    }]);
   };
 
   // ── Paste-mode contract creation ─────────────────────────────────────────────
@@ -934,8 +1046,8 @@ export default function Dashboard() {
   // All completion handling is done by the transition effect watching contract.status.
   const handleStartStep = useCallback(
     async (step: 'build' | 'audit' | 'deploy') => {
-      // Guard: if we already fired a step and are waiting for WS confirmation, ignore.
-      if (pendingStepRef.current) return;
+      // Guard: ignore if this specific project already has a pending step in flight.
+      if (pendingStepRef.current?.projectId === currentProject?.uid) return;
 
       const uid = currentProject?.bummUid ?? currentProject?.uid;
       if (!uid) {
@@ -944,9 +1056,12 @@ export default function Dashboard() {
       }
 
       // Immediately show loader — no waiting for WS heartbeat
-      setPendingStep(step);
+      setPendingStep({ projectId: currentProject!.uid, step });
       // Ensure WS is connected to this project
       setActiveContractUid(uid);
+      if (currentProject) {
+        setTrackedContracts(prev => ({ ...prev, [currentProject.uid]: uid }));
+      }
       try {
         await tryRefresh();
         if (step === 'build')  await apiClient.triggerBuild(uid);
@@ -961,14 +1076,31 @@ export default function Dashboard() {
   );
 
   // ── Computed UI state (no useState — pure derivation every render) ────────
-  const ui = deriveUIFromStatus(contract.status, !!(currentProject?.code?.trim()), pendingStep);
+  // Priority: REST-pre-loaded or multiContract WS status → single WS status.
+  // handleSelectProject no longer opens a WS (to avoid spurious transitions),
+  // so contract.status is only relevant when the user triggered a step
+  // (which sets activeContractUid = currentProject's uid).
+  const currentProjectContractUid = currentProject
+    ? (currentProject.bummUid ?? currentProject.uid)
+    : null;
+  const singleWsMatchesCurrent = activeContractUid === currentProjectContractUid;
+  const activeStatus = currentProject
+    ? (projectStatuses[currentProject.uid] ?? (singleWsMatchesCurrent ? contract.status : null))
+    : contract.status;
+  // Only apply the optimistic pending state if it belongs to the currently viewed project
+  const currentPendingStep = (pendingStep && pendingStep.projectId === currentProject?.uid)
+    ? pendingStep.step
+    : null;
+  const ui = deriveUIFromStatus(activeStatus, !!(currentProject?.code?.trim()), currentPendingStep);
 
   // Project management functions
   const handleSelectProject = async (project: Project) => {
     try {
       // Save current messages for current project (if any)
-      if (currentProject && messages.length > 0) {
-        localStorage.setItem(`bumm_chat_history_${currentProject.uid}`, JSON.stringify(messages));
+      // Skip if uid is a stub (not yet a real backend contract)
+      const isRealUid = currentProject && !currentProject.uid.startsWith('stub-');
+      if (isRealUid && messages.length > 0) {
+        localStorage.setItem(`bumm_chat_history_${currentProject!.uid}`, JSON.stringify(messages));
         // Also save to backend
         const chatForBackend = messages
           .filter(m => !m.content.startsWith('⏳') && !m.content.startsWith('⚙️'))
@@ -977,11 +1109,19 @@ export default function Dashboard() {
             content: m.content,
             timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
           }));
-        apiClient.saveContractChat(currentProject.uid, chatForBackend).catch(() => {});
+        apiClient.saveContractChat(currentProject!.uid, chatForBackend).catch(() => {});
       }
 
-      // Switch to new project
+      // Switch to new project — use REST for initial status instead of WS.
+      // Opening a WS here would send the current status as a "new" event,
+      // causing transition effects [C]/[D]/[E]/[F] to re-fire (spurious
+      // "build succeeded", "audit complete" messages on every project switch).
       setCurrentProject(project);
+      // Pre-populate projectStatuses via REST so activeStatus is correct immediately.
+      // Does NOT trigger prevStatusRef / transition effects.
+      apiClient.getContractStatus(project.bummUid ?? project.uid)
+        .then(status => setProjectStatuses(prev => ({ ...prev, [project.uid]: status })))
+        .catch(() => {});
 
       // Fetch code from API so ChatScreen doesn't need localStorage cache
       apiClient.getContractCode(project.uid).then(result => {

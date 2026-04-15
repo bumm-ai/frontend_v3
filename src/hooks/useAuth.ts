@@ -8,7 +8,6 @@ import {
   verify,
   logout as authLogout,
   tryRefresh,
-  accessTokenTtl,
   decodeJwt,
 } from '@/services/authService';
 import { getAccessToken, clearTokens } from '@/services/api';
@@ -22,7 +21,7 @@ export interface AuthState {
 }
 
 export function useAuth() {
-  const { publicKey, signMessage, connected, disconnect } = useWallet();
+  const { publicKey, signMessage, disconnect } = useWallet();
 
   const [state, setState] = useState<AuthState>({
     isAuthenticated: false,
@@ -69,7 +68,15 @@ export function useAuth() {
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
     const ms = (expUnix - Math.floor(Date.now() / 1000) - 60) * 1000;
     if (ms <= 0) {
-      tryRefresh().then((ok) => { if (!ok) signOut(); });
+      // Backend temporarily unavailable — retry in 2 min, never auto-logout
+      tryRefresh().then((ok) => {
+        if (ok) {
+          const token = getAccessToken();
+          if (token) { const p = decodeJwt(token); if (p) scheduleRefresh(p.exp); }
+        } else {
+          refreshTimerRef.current = setTimeout(() => scheduleRefresh(expUnix), 2 * 60 * 1000);
+        }
+      });
       return;
     }
     refreshTimerRef.current = setTimeout(async () => {
@@ -81,7 +88,8 @@ export function useAuth() {
           if (p) scheduleRefresh(p.exp);
         }
       } else {
-        signOut();
+        // Backend temporarily unavailable — retry in 2 min, never auto-logout
+        refreshTimerRef.current = setTimeout(() => scheduleRefresh(expUnix), 2 * 60 * 1000);
       }
     }, ms);
   }
@@ -134,13 +142,7 @@ export function useAuth() {
     disconnect().catch(() => {});
   }, [disconnect]);
 
-  // ── Auto-logout when wallet disconnected externally ────────────────────────
-  useEffect(() => {
-    if (!connected && state.isAuthenticated) {
-      signOut();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connected]);
+  // Wallet disconnect does NOT trigger logout — user must click the logout button.
 
   return {
     ...state,

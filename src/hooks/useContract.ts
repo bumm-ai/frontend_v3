@@ -254,3 +254,79 @@ export function useContract(uid: string | null) {
     getAudit,
   };
 }
+
+/**
+ * Manages N concurrent WebSocket connections — one per actively tracked project.
+ * Does NOT close a WS when the user switches projects; only closes on terminal
+ * phase or when a uid is removed from trackedUids.
+ */
+export function useMultiContract(
+  trackedUids: Record<string, string>,
+  onStatusChange: (projectId: string, status: ContractStatus) => void,
+) {
+  const socketsRef = useRef<Map<string, WebSocket>>(new Map());
+  const callbackRef = useRef(onStatusChange);
+  callbackRef.current = onStatusChange;
+
+  useEffect(() => {
+    const sockets = socketsRef.current;
+    const trackedProjectIds = Object.keys(trackedUids);
+
+    // Open new WS for newly tracked project IDs
+    for (const projectId of trackedProjectIds) {
+      if (sockets.has(projectId)) continue;
+      const contractUid = trackedUids[projectId];
+
+      const connect = (attempt = 0) => {
+        const token = getAccessToken();
+        if (!token) return;
+        const ws = new WebSocket(`${ENDPOINTS.WS_CONTRACT(contractUid)}?token=${token}`);
+        sockets.set(projectId, ws);
+
+        ws.onmessage = (evt) => {
+          try {
+            const msg = JSON.parse(evt.data as string) as ContractStatus;
+            callbackRef.current(projectId, msg);
+            if (TERMINAL.includes(msg.phase)) {
+              ws.close(1000);
+              sockets.delete(projectId);
+            }
+          } catch { /* ignore malformed frame */ }
+        };
+
+        ws.onerror = () => { sockets.delete(projectId); };
+
+        ws.onclose = (evt) => {
+          if (evt.code === 1000) return;
+          if (evt.code === 4001) {
+            tryRefresh().then(ok => {
+              if (ok) connect(attempt);
+            });
+            return;
+          }
+          if (evt.code === 4003 || evt.code === 4004) return;
+          const delay = RECONNECT_DELAYS[Math.min(attempt, RECONNECT_DELAYS.length - 1)];
+          setTimeout(() => connect(attempt + 1), delay);
+        };
+      };
+      connect();
+    }
+
+    // Close WS for projects no longer tracked
+    for (const [projectId, ws] of sockets.entries()) {
+      if (!trackedUids[projectId]) {
+        ws.close(1000);
+        sockets.delete(projectId);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackedUids]);
+
+  // Cleanup all sockets on unmount
+  useEffect(() => {
+    return () => {
+      for (const ws of socketsRef.current.values()) ws.close(1000);
+      socketsRef.current.clear();
+    };
+  }, []);
+}
