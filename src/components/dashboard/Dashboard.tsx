@@ -620,13 +620,17 @@ export default function Dashboard() {
   }, [auth.isAuthenticated]);
 
   // Keep viewedContractUidRef aligned with currentProject for pipeline/paste paths.
+  // Important: do not clear on transient currentProject=null during async UI churn.
+  // Clear only when we are truly in a blank workspace (no selected project and no list).
   useEffect(() => {
-    if (!currentProject || currentProject.uid.startsWith('stub-')) {
-      viewedContractUidRef.current = null;
+    if (currentProject && !currentProject.uid.startsWith('stub-')) {
+      viewedContractUidRef.current = currentProject.bummUid ?? currentProject.uid;
       return;
     }
-    viewedContractUidRef.current = currentProject.bummUid ?? currentProject.uid;
-  }, [currentProject]);
+    if (!currentProject && projects.length === 0) {
+      viewedContractUidRef.current = null;
+    }
+  }, [currentProject, projects.length]);
 
   // ── Helper: launch the pipeline with an enriched prompt ──────────────────
   const launchPipeline = useCallback(async (enrichedPrompt: string) => {
