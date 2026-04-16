@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { apiClient, getAccessToken } from '@/services/api';
+import { tryRefresh } from '@/services/authService';
 import type { BalanceResponse, PurchaseResponse, CreditRatesResponse, CreditsStreamEvent } from '@/lib/api';
 import { wsHub } from '@/services/wsHub';
 import { balanceBus } from '@/services/balanceBus';
@@ -72,21 +73,33 @@ export function useCredits() {
 
   // ── Subscribe to live credit updates via WebSocket ────────────────────────────
   useEffect(() => {
-    const token = getAccessToken();
-    if (!connected || !token) return;
+    if (!connected) return;
 
-    const unsub = wsHub.subscribe(
-      'credits',
-      (raw) => {
-        const event = raw as CreditsStreamEvent;
-        if (typeof event.balance === 'number') {
-          setBalance(event.balance);
-        }
-      },
-      token,
-    );
+    let cancelled = false;
+    let unsub: (() => void) | undefined;
 
-    return unsub;
+    void (async () => {
+      await tryRefresh();
+      if (cancelled) return;
+      const token = getAccessToken();
+      if (!token) return;
+
+      unsub = wsHub.subscribe(
+        'credits',
+        (raw) => {
+          const event = raw as CreditsStreamEvent;
+          if (typeof event.balance === 'number') {
+            setBalance(event.balance);
+          }
+        },
+        token,
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
   }, [connected]);
 
   // ── Initial load on wallet connect ───────────────────────────────────────────
