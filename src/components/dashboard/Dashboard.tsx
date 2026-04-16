@@ -250,11 +250,6 @@ export default function Dashboard() {
   const currentProjectRef = useRef(currentProject);
   currentProjectRef.current = currentProject;
 
-  /** Which contract the user is *viewing* for chat — updated synchronously on
-   * project pick (before setState/await) so handleSendMessage never misses
-   * contract_uid during handleSelectProject + getContractChat races. */
-  const viewedContractUidRef = useRef<string | null>(null);
-
   useEffect(() => {
     if (!contract.status) return;
     const prev = prevStatusRef.current;
@@ -333,7 +328,6 @@ export default function Dashboard() {
         bummUid: uid,
         code: '',
       };
-      viewedContractUidRef.current = uid;
       setCurrentProject(earlyProject);
       updateProjects(prev => [earlyProject, ...prev.filter(p => p.uid !== uid)]);
       apiClient.updateContract(uid, { name: earlyName }).catch(() => {});
@@ -619,15 +613,6 @@ export default function Dashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.isAuthenticated]);
 
-  // Keep viewedContractUidRef aligned with currentProject for pipeline/paste paths.
-  useEffect(() => {
-    if (!currentProject || currentProject.uid.startsWith('stub-')) {
-      viewedContractUidRef.current = null;
-      return;
-    }
-    viewedContractUidRef.current = currentProject.bummUid ?? currentProject.uid;
-  }, [currentProject]);
-
   // ── Helper: launch the pipeline with an enriched prompt ──────────────────
   const launchPipeline = useCallback(async (enrichedPrompt: string) => {
     if (!hasEnoughCredits('generate')) {
@@ -726,11 +711,9 @@ export default function Dashboard() {
     // between the time the user pressed Send and now (e.g. during project switch).
     // Pass contract_uid so the backend switches to "existing contract advisor" mode
     // and is hard-forced to never return ready=true server-side.
+    const projectAtSendTime = currentProjectRef.current;
     const existingContractUid =
-      viewedContractUidRef.current
-      ?? currentProjectRef.current?.bummUid
-      ?? currentProjectRef.current?.uid
-      ?? undefined;
+      projectAtSendTime?.bummUid ?? projectAtSendTime?.uid ?? undefined;
     try {
       const chatResp = await apiClient.chatMessage(history, existingContractUid);
 
@@ -746,12 +729,8 @@ export default function Dashboard() {
       // 5. Auto-launch pipeline ONLY for the blank "new chat" flow — no project at all
       // (or a never-persisted stub). Re-read the ref: if project appeared while the
       // chat API was in-flight (e.g. race during switch) we still must NOT re-generate.
-      const viewedUid =
-        viewedContractUidRef.current
-        ?? currentProjectRef.current?.bummUid
-        ?? currentProjectRef.current?.uid
-        ?? null;
-      const isNewContractFlow = !viewedUid || viewedUid.startsWith('stub-');
+      const projectNow = currentProjectRef.current;
+      const isNewContractFlow = !projectNow || projectNow.uid.startsWith('stub-');
       if (chatResp.ready && chatResp.enriched_prompt && isNewContractFlow) {
         await launchPipeline(chatResp.enriched_prompt);
       }
@@ -999,7 +978,6 @@ export default function Dashboard() {
     // We intentionally do NOT call useBummApi.createProject here because it
     // returns a stub-${Date.now()} uid that would cause 500 errors if the
     // frontend ever tried to save chat history or status for it.
-    viewedContractUidRef.current = null;
     setCurrentProject(null);
     setActiveContractUid(null);
     // Clear UI-only optimistic state so the new blank project starts clean.
@@ -1048,7 +1026,6 @@ export default function Dashboard() {
           code,
         };
         setCurrentProject(newProject);
-        viewedContractUidRef.current = created.uid;
         updateProjects(prev => [newProject, ...prev.filter(p => p.uid !== created.uid)]);
         projectCreatedRef.current = created.uid;
 
@@ -1130,10 +1107,6 @@ export default function Dashboard() {
   // Project management functions
   const handleSelectProject = async (project: Project) => {
     try {
-      // Must run before any await — otherwise chat can fire with stale/null project
-      // and POST /chat omits contract_uid → spurious new generation.
-      viewedContractUidRef.current = project.bummUid ?? project.uid;
-
       // Save current messages for current project (if any)
       // Skip if uid is a stub (not yet a real backend contract)
       const isRealUid = currentProject && !currentProject.uid.startsWith('stub-');

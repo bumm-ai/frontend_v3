@@ -11,8 +11,6 @@
  */
 
 import { WS_BASE } from '@/config/api';
-import { getAccessToken } from '@/services/api';
-import { tryRefresh } from '@/services/authService';
 
 type MessageHandler = (data: unknown) => void;
 
@@ -48,8 +46,6 @@ class WsHub {
       state = { ws: null, handlers: new Set(), token, attempt: 0, timer: null, closing: false };
       this.channels.set(channel, state);
       this._connect(channel, state);
-    } else {
-      state.token = token;
     }
 
     state.handlers.add(onMessage);
@@ -64,14 +60,8 @@ class WsHub {
 
   private _connect(channel: string, state: ChannelState): void {
     if (state.closing) return;
-    const fresh = getAccessToken() || state.token;
-    if (!fresh) {
-      state.timer = setTimeout(() => this._connect(channel, state), 2000);
-      return;
-    }
-    state.token = fresh;
     try {
-      const url = channelToUrl(channel, fresh);
+      const url = channelToUrl(channel, state.token);
       const ws = new WebSocket(url);
       state.ws = ws;
 
@@ -84,17 +74,8 @@ class WsHub {
 
       ws.onclose = (e) => {
         if (state.closing) return;
-        // Expired / invalid JWT — refresh then reconnect (credits WS uses query token)
-        if (e.code === 4001) {
-          void tryRefresh().finally(() => {
-            if (state.closing) return;
-            const delay = BACKOFF[Math.min(state.attempt, BACKOFF.length - 1)];
-            state.attempt++;
-            state.timer = setTimeout(() => this._connect(channel, state), delay);
-          });
-          return;
-        }
-        if (e.code === 4003 || e.code === 4004) return;
+        // Don't reconnect on auth/not-found codes
+        if (e.code === 4001 || e.code === 4003 || e.code === 4004) return;
         const delay = BACKOFF[Math.min(state.attempt, BACKOFF.length - 1)];
         state.attempt++;
         state.timer = setTimeout(() => this._connect(channel, state), delay);
