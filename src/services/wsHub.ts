@@ -4,8 +4,11 @@
  * Prevents duplicate connections when multiple components
  * subscribe to the same channel (e.g. BuildModal + StatusBar → same contract).
  *
+ * Accepts a `getToken` factory so that after auth_refresh the reconnect
+ * automatically uses the fresh token instead of the stale one at subscribe time.
+ *
  * Usage:
- *   const unsub = wsHub.subscribe('contract:abc-123', (msg) => handleMsg(msg), token)
+ *   const unsub = wsHub.subscribe('contract:abc-123', (msg) => handleMsg(msg), () => getAccessToken() ?? '')
  *   // cleanup:
  *   unsub()
  */
@@ -13,11 +16,12 @@
 import { WS_BASE } from '@/config/api';
 
 type MessageHandler = (data: unknown) => void;
+type TokenFactory  = () => string;
 
 interface ChannelState {
   ws: WebSocket | null;
   handlers: Set<MessageHandler>;
-  token: string;
+  getToken: TokenFactory;
   attempt: number;
   timer: ReturnType<typeof setTimeout> | null;
   closing: boolean;
@@ -39,13 +43,33 @@ function channelToUrl(channel: string, token: string): string {
 class WsHub {
   private channels = new Map<string, ChannelState>();
 
-  subscribe(channel: string, onMessage: MessageHandler, token: string): () => void {
+  /**
+   * Subscribe to a WebSocket channel.
+   *
+   * @param channel   - 'contract:{uid}' or 'credits'
+   * @param onMessage - handler called with parsed JSON data
+   * @param getToken  - factory that returns the current JWT (called on every
+   *                    connect/reconnect so a refreshed token is always used)
+   *                    OR a static string for backward compat
+   */
+  subscribe(
+    channel: string,
+    onMessage: MessageHandler,
+    getToken: TokenFactory | string,
+  ): () => void {
+    // Normalise: accept static string for backward compat
+    const factory: TokenFactory =
+      typeof getToken === 'function' ? getToken : () => getToken;
+
     let state = this.channels.get(channel);
 
     if (!state) {
-      state = { ws: null, handlers: new Set(), token, attempt: 0, timer: null, closing: false };
+      state = { ws: null, handlers: new Set(), getToken: factory, attempt: 0, timer: null, closing: false };
       this.channels.set(channel, state);
       this._connect(channel, state);
+    } else {
+      // Update token factory so next reconnect uses fresh credentials
+      state.getToken = factory;
     }
 
     state.handlers.add(onMessage);
@@ -60,8 +84,15 @@ class WsHub {
 
   private _connect(channel: string, state: ChannelState): void {
     if (state.closing) return;
+    // Resolve current token at connect time (not at subscribe time)
+    const token = state.getToken();
+    if (!token) {
+      // No token yet — retry after first backoff interval
+      state.timer = setTimeout(() => this._connect(channel, state), BACKOFF[0]);
+      return;
+    }
     try {
-      const url = channelToUrl(channel, state.token);
+      const url = channelToUrl(channel, token);
       const ws = new WebSocket(url);
       state.ws = ws;
 
@@ -74,7 +105,7 @@ class WsHub {
 
       ws.onclose = (e) => {
         if (state.closing) return;
-        // Don't reconnect on auth/not-found codes
+        // Don't reconnect on permanent auth/not-found codes
         if (e.code === 4001 || e.code === 4003 || e.code === 4004) return;
         const delay = BACKOFF[Math.min(state.attempt, BACKOFF.length - 1)];
         state.attempt++;
@@ -83,7 +114,10 @@ class WsHub {
 
       ws.onerror = () => { /* handled by onclose */ };
     } catch {
-      // URL construction failed
+      // URL construction failed — retry after backoff
+      const delay = BACKOFF[Math.min(state.attempt, BACKOFF.length - 1)];
+      state.attempt++;
+      state.timer = setTimeout(() => this._connect(channel, state), delay);
     }
   }
 

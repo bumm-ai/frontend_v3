@@ -146,6 +146,11 @@ export default function Dashboard() {
   const [generationAttemptFailed, setGenerationAttemptFailed] = useState(0);
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
   const [pasteModalInitialCode, setPasteModalInitialCode] = useState<string | undefined>(undefined);
+  // Track whether THIS frontend session has an active generation in flight.
+  // Used to gate the "generating" animation so it only appears for live
+  // generations started by this client, and not when revisiting an existing
+  // contract whose backend phase is still "generating".
+  const [isGenerationActive, setIsGenerationActive] = useState(false);
 
   // Step triggering state removed — button/animation derive from contract.status
   // via deriveUIFromStatus (no local mirrors needed).
@@ -357,6 +362,7 @@ export default function Dashboard() {
       });
 
       setPipelineMsgId(null);
+      setIsGenerationActive(false);
     }
 
     // [C] Build complete: build_ok just became true
@@ -552,6 +558,7 @@ export default function Dashboard() {
     if (prev && curr.phase === 'failed' && prev.phase !== 'failed' && activeContractUid) {
       addAIMessageForProject(activeContractUid, `❌ **Pipeline failed:** ${curr.error ?? 'Unknown error'}`);
       setPipelineMsgId(null);
+      setIsGenerationActive(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contract.status]);
@@ -627,6 +634,7 @@ export default function Dashboard() {
 
     const statusMsgId = generateUniqueMessageId();
     setPipelineMsgId(statusMsgId);
+    setIsGenerationActive(true);
     setMessages(prev => [...prev, {
       id: statusMsgId,
       content: '⏳ Starting pipeline...',
@@ -662,6 +670,7 @@ export default function Dashboard() {
         )
       );
       setPipelineMsgId(null);
+      setIsGenerationActive(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasEnoughCredits, contract]);
@@ -706,9 +715,20 @@ export default function Dashboard() {
       isUser: false,
     }]);
 
-    // 4. Call chat API
+    // 4. Call chat API.
+    // Read via ref so we always have the project that was active when the user
+    // pressed Send, even if a project switch raced with the async call.
+    // Passing contract_uid switches the backend to "existing contract advisor"
+    // mode (never returns ready=true) — first line of defence against spurious
+    // re-generation. isNewContractFlow is the second line of defence client-side.
+    const projectAtSendTime = currentProjectRef.current;
+    const existingContractUid =
+      projectAtSendTime?.bummUid ?? projectAtSendTime?.uid ?? undefined;
+    // A real project has a UUID uid; stub- means no contract has been created yet.
+    const isNewContractFlow = !projectAtSendTime || projectAtSendTime.uid.startsWith('stub-');
+
     try {
-      const chatResp = await apiClient.chatMessage(history);
+      const chatResp = await apiClient.chatMessage(history, existingContractUid);
 
       // Replace typing indicator with actual AI response
       setMessages(prev =>
@@ -719,8 +739,11 @@ export default function Dashboard() {
         )
       );
 
-      // 5. If AI says ready → launch the pipeline automatically
-      if (chatResp.ready && chatResp.enriched_prompt) {
+      // 5. If AI says ready → launch the pipeline automatically.
+      // Guard: ONLY fire for blank new-contract flow. If the user is viewing an
+      // existing project, isNewContractFlow is false and we never re-generate,
+      // even if the backend somehow leaked ready=true.
+      if (chatResp.ready && chatResp.enriched_prompt && isNewContractFlow) {
         await launchPipeline(chatResp.enriched_prompt);
       }
     } catch (err) {
@@ -1091,7 +1114,12 @@ export default function Dashboard() {
   const currentPendingStep = (pendingStep && pendingStep.projectId === currentProject?.uid)
     ? pendingStep.step
     : null;
-  const ui = deriveUIFromStatus(activeStatus, !!(currentProject?.code?.trim()), currentPendingStep);
+  const ui = deriveUIFromStatus(
+    activeStatus,
+    !!(currentProject?.code?.trim()),
+    currentPendingStep,
+    isGenerationActive,
+  );
 
   // Project management functions
   const handleSelectProject = async (project: Project) => {
@@ -1116,6 +1144,14 @@ export default function Dashboard() {
       // Opening a WS here would send the current status as a "new" event,
       // causing transition effects [C]/[D]/[E]/[F] to re-fire (spurious
       // "build succeeded", "audit complete" messages on every project switch).
+      //
+      // CRITICAL: reset prevStatusRef BEFORE setCurrentProject so that if a
+      // stale WS heartbeat arrives right after the switch, the transition guards
+      // (which compare prev vs curr) see prev=null and silently skip.
+      // Without this reset, switching to a project that already has build_ok=true
+      // while prevStatusRef still holds the previous project's build_ok=false
+      // would fire the [C] "build complete" transition spuriously.
+      prevStatusRef.current = null;
       setCurrentProject(project);
       // Pre-populate projectStatuses via REST so activeStatus is correct immediately.
       // Does NOT trigger prevStatusRef / transition effects.

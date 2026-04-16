@@ -9,8 +9,63 @@ import { useCredits } from '@/hooks/useCredits';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import { CreditHistory } from './CreditHistory';
 
-// Treasury wallet for credit purchases
-const TREASURY_WALLET = new PublicKey('5crqSfo5WA9diQKUnuBkAQmXntzWzXcE2hZm5RW7DvyX');
+// Treasury wallet for credit purchases.
+// Must match backend settings.treasury_wallet_address.
+const TREASURY_WALLET = new PublicKey('DJb1g84e1Xs5oBbQsAX2iywKFsaggMrgCL5K8V7eMi8d');
+const FINALIZATION_TIMEOUT_MS = 60_000;
+const FINALIZATION_POLL_MS = 1_500;
+
+async function waitForFinalized(
+  connection: ReturnType<typeof useConnection>['connection'],
+  signature: string,
+): Promise<void> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < FINALIZATION_TIMEOUT_MS) {
+    const statuses = await connection.getSignatureStatuses(
+      [signature],
+      { searchTransactionHistory: true },
+    );
+    const status = statuses.value[0];
+
+    if (status?.err) {
+      throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
+    }
+    if (status?.confirmationStatus === 'finalized') {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, FINALIZATION_POLL_MS));
+  }
+
+  throw new Error('Transaction was not finalized in time. Please try again.');
+}
+
+async function purchaseWithRetry(
+  purchaseFn: (sig: string) => Promise<unknown>,
+  signature: string,
+): Promise<void> {
+  const maxAttempts = 4;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await purchaseFn(signature);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const isNotReadyYet =
+        message.includes('not found or not yet finalized') ||
+        message.includes('not yet finalized');
+      const isLastAttempt = attempt === maxAttempts;
+
+      if (!isNotReadyYet || isLastAttempt) {
+        throw error;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+    }
+  }
+}
 
 export const HeaderCreditsButton = () => {
   const { connected, publicKey, sendTransaction } = useWallet();
@@ -91,11 +146,13 @@ export const HeaderCreditsButton = () => {
       // 2. Send and sign via wallet adapter
       const signature = await sendTransaction(transaction, connection);
 
-      // 3. Wait for confirmation
-      await connection.confirmTransaction(signature, 'confirmed');
+      // 3. Wait until the tx is FINALIZED.
+      // Backend verifies purchases with finalized commitment, so "confirmed"
+      // can race and produce "not found or not yet finalized".
+      await waitForFinalized(connection, signature);
 
       // 4. Notify backend — verify on-chain and credit account
-      await purchase(signature);
+      await purchaseWithRetry(purchase, signature);
 
       analytics.trackCreditPurchase(selectedCredits, 'SOL');
       setShowDropdown(false);

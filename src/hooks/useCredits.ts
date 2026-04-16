@@ -71,9 +71,10 @@ export function useCredits() {
   }, []);
 
   // ── Subscribe to live credit updates via WebSocket ────────────────────────────
+  // Pass getAccessToken as a factory so that after auth_refresh the reconnect
+  // uses the fresh token automatically (wsHub calls factory on every connect).
   useEffect(() => {
-    const token = getAccessToken();
-    if (!connected || !token) return;
+    if (!connected) return;
 
     const unsub = wsHub.subscribe(
       'credits',
@@ -83,7 +84,7 @@ export function useCredits() {
           setBalance(event.balance);
         }
       },
-      token,
+      () => getAccessToken() ?? '',
     );
 
     return unsub;

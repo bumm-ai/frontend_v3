@@ -38,6 +38,7 @@ export function deriveUIFromStatus(
   status: ContractStatus | null,
   hasCode: boolean,
   pendingStep?: 'build' | 'audit' | 'deploy' | null,
+  isGenerationActive?: boolean,
 ): { buttonState: ActionButtonState; animationStage: AnimationStage } {
   // Optimistic override: immediately show loader between button click and the
   // first WS heartbeat that confirms the phase changed. Prevents double-clicks.
@@ -53,7 +54,14 @@ export function deriveUIFromStatus(
 
   // Derive animation stage — only when the corresponding step is NOT yet complete
   let animationStage: AnimationStage = null;
-  if (phase === 'enriching' || phase === 'generating') {
+  // Show "generating" animation ONLY if this frontend actually started the
+  // generation in the current session. Prevents re-arming the animation when
+  // the user switches projects or reloads the page while the backend phase is
+  // still "enriching"/"generating" for an already-existing contract.
+  if (
+    isGenerationActive &&
+    (phase === 'enriching' || phase === 'generating')
+  ) {
     animationStage = 'generating';
   } else if (
     !build_ok &&
