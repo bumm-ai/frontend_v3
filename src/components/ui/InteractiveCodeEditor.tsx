@@ -56,15 +56,16 @@ export const InteractiveCodeEditor = ({
     }
   }, [isGenerating, initialCode]);
 
-  // Update code when initialCode changes (for auto demo)
+  // Sync initialCode from parent only when it's not a user-edit echo-back
   useEffect(() => {
-    if (initialCode !== undefined && initialCode !== code) {
+    if (initialCode !== undefined && initialCode !== code && source !== 'user-input') {
       setCode(initialCode);
       if (initialCode.trim()) {
         setSource('ai-generated');
         onCodeChange(initialCode, 'ai-generated');
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialCode]);
 
   const handleCodeChange = (newCode: string) => {

@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, Upload, Network, Shield, Rocket, Zap } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { DancingDotsLoader } from './DancingDotsLoader';
 
 interface DeployStage {
@@ -67,12 +67,19 @@ interface DeployStagesProps {
 export const DeployStages = ({ isDeploying, onComplete, onAddAIMessage }: DeployStagesProps) => {
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [completedStages, setCompletedStages] = useState<string[]>([]);
+  const startedRef = useRef(false);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   useEffect(() => {
-    if (!isDeploying && completedStages.length > 0) {
-      setCompletedStages(deployStages.map(s => s.id));
-      onComplete();
+    if (isDeploying) {
+      startedRef.current = true;
+      return;
     }
+    if (!startedRef.current) return;
+    startedRef.current = false;
+    setCompletedStages(deployStages.map(s => s.id));
+    onCompleteRef.current();
   }, [isDeploying]);
 
   useEffect(() => {
@@ -82,20 +89,16 @@ export const DeployStages = ({ isDeploying, onComplete, onAddAIMessage }: Deploy
       return;
     }
 
-    let timeoutId: NodeJS.Timeout;
+    if (currentStageIndex >= deployStages.length - 1) return;
 
-    if (currentStageIndex < deployStages.length - 1) {
-      const currentStage = deployStages[currentStageIndex];
-      timeoutId = setTimeout(() => {
-        setCompletedStages(prev => [...prev, currentStage.id]);
-        setCurrentStageIndex(prev => prev + 1);
-      }, currentStage.duration);
-    }
+    const currentStage = deployStages[currentStageIndex];
+    const timeoutId = setTimeout(() => {
+      setCompletedStages(prev => [...prev, currentStage.id]);
+      setCurrentStageIndex(prev => prev + 1);
+    }, currentStage.duration);
 
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [isDeploying, currentStageIndex, onComplete]);
+    return () => clearTimeout(timeoutId);
+  }, [isDeploying, currentStageIndex]);
 
   if (!isDeploying) return null;
 

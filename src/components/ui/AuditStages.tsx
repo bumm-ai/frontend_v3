@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { Shield, Search, FileText, Bug, CheckCircle, AlertTriangle, Zap } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { DancingDotsLoader } from './DancingDotsLoader';
 
 interface AuditStage {
@@ -74,12 +74,19 @@ interface AuditStagesProps {
 export const AuditStages = ({ isAuditing, onComplete, onAddAIMessage }: AuditStagesProps) => {
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [completedStages, setCompletedStages] = useState<string[]>([]);
+  const startedRef = useRef(false);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   useEffect(() => {
-    if (!isAuditing && completedStages.length > 0) {
-      setCompletedStages(auditStages.map(s => s.id));
-      onComplete();
+    if (isAuditing) {
+      startedRef.current = true;
+      return;
     }
+    if (!startedRef.current) return;
+    startedRef.current = false;
+    setCompletedStages(auditStages.map(s => s.id));
+    onCompleteRef.current();
   }, [isAuditing]);
 
   useEffect(() => {
@@ -89,20 +96,16 @@ export const AuditStages = ({ isAuditing, onComplete, onAddAIMessage }: AuditSta
       return;
     }
 
-    let timeoutId: NodeJS.Timeout;
+    if (currentStageIndex >= auditStages.length - 1) return;
 
-    if (currentStageIndex < auditStages.length - 1) {
-      const currentStage = auditStages[currentStageIndex];
-      timeoutId = setTimeout(() => {
-        setCompletedStages(prev => [...prev, currentStage.id]);
-        setCurrentStageIndex(prev => prev + 1);
-      }, currentStage.duration);
-    }
+    const currentStage = auditStages[currentStageIndex];
+    const timeoutId = setTimeout(() => {
+      setCompletedStages(prev => [...prev, currentStage.id]);
+      setCurrentStageIndex(prev => prev + 1);
+    }, currentStage.duration);
 
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [isAuditing, currentStageIndex, onComplete]);
+    return () => clearTimeout(timeoutId);
+  }, [isAuditing, currentStageIndex]);
 
   if (!isAuditing) return null;
 

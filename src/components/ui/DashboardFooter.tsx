@@ -45,7 +45,7 @@ export const DashboardFooter = () => {
               AI-powered code generation and deployment on Solana
             </div>
             <div className="text-xs text-gray-500">
-              © 2025 Bumm.io
+              © 2026 Bumm.io
             </div>
             
             {/* Social Media на мобильных - под копирайтом */}

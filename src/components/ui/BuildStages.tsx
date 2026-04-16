@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { Settings, Wrench, Search, Code, Play, TestTube, Zap, CheckCircle } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { DancingDotsLoader } from './DancingDotsLoader';
 
 interface BuildStage {
@@ -74,15 +74,24 @@ interface BuildStagesProps {
 export const BuildStages = ({ isBuilding, onComplete, onAddAIMessage }: BuildStagesProps) => {
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [completedStages, setCompletedStages] = useState<string[]>([]);
+  // Track whether we've ever started to avoid calling onComplete on first mount.
+  const startedRef = useRef(false);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
-  // When backend finishes, flash complete + call onComplete.
+  // When backend signals done (isBuilding → false), flash all complete and notify.
   useEffect(() => {
-    if (!isBuilding && completedStages.length > 0) {
-      setCompletedStages(buildStages.map(s => s.id));
-      onComplete();
+    if (isBuilding) {
+      startedRef.current = true;
+      return;
     }
+    if (!startedRef.current) return;
+    startedRef.current = false;
+    setCompletedStages(buildStages.map(s => s.id));
+    onCompleteRef.current();
   }, [isBuilding]);
 
+  // Advance animation stages on a timer; park on the last until backend is done.
   useEffect(() => {
     if (!isBuilding) {
       setCurrentStageIndex(0);
@@ -90,21 +99,16 @@ export const BuildStages = ({ isBuilding, onComplete, onAddAIMessage }: BuildSta
       return;
     }
 
-    let timeoutId: NodeJS.Timeout;
-    
-    // Park on the last stage until the real backend build finishes (isBuilding → false).
-    if (currentStageIndex < buildStages.length - 1) {
-      const currentStage = buildStages[currentStageIndex];
-      timeoutId = setTimeout(() => {
-        setCompletedStages(prev => [...prev, currentStage.id]);
-        setCurrentStageIndex(prev => prev + 1);
-      }, currentStage.duration);
-    }
+    if (currentStageIndex >= buildStages.length - 1) return;
 
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [isBuilding, currentStageIndex, onComplete]);
+    const currentStage = buildStages[currentStageIndex];
+    const timeoutId = setTimeout(() => {
+      setCompletedStages(prev => [...prev, currentStage.id]);
+      setCurrentStageIndex(prev => prev + 1);
+    }, currentStage.duration);
+
+    return () => clearTimeout(timeoutId);
+  }, [isBuilding, currentStageIndex]);
 
   if (!isBuilding) return null;
 

@@ -146,11 +146,8 @@ export default function Dashboard() {
   const [generationAttemptFailed, setGenerationAttemptFailed] = useState(0);
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
   const [pasteModalInitialCode, setPasteModalInitialCode] = useState<string | undefined>(undefined);
-  // Track whether THIS frontend session has an active generation in flight.
-  // Used to gate the "generating" animation so it only appears for live
-  // generations started by this client, and not when revisiting an existing
-  // contract whose backend phase is still "generating".
-  const [isGenerationActive, setIsGenerationActive] = useState(false);
+  // Generation animation is derived from backend status (phase + next_step),
+  // not from a client-side session flag. See deriveAnimationStage.
 
   // Step triggering state removed — button/animation derive from contract.status
   // via deriveUIFromStatus (no local mirrors needed).
@@ -362,7 +359,6 @@ export default function Dashboard() {
       });
 
       setPipelineMsgId(null);
-      setIsGenerationActive(false);
     }
 
     // [C] Build complete: build_ok just became true
@@ -558,7 +554,6 @@ export default function Dashboard() {
     if (prev && curr.phase === 'failed' && prev.phase !== 'failed' && activeContractUid) {
       addAIMessageForProject(activeContractUid, `❌ **Pipeline failed:** ${curr.error ?? 'Unknown error'}`);
       setPipelineMsgId(null);
-      setIsGenerationActive(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contract.status]);
@@ -634,7 +629,6 @@ export default function Dashboard() {
 
     const statusMsgId = generateUniqueMessageId();
     setPipelineMsgId(statusMsgId);
-    setIsGenerationActive(true);
     setMessages(prev => [...prev, {
       id: statusMsgId,
       content: '⏳ Starting pipeline...',
@@ -647,7 +641,7 @@ export default function Dashboard() {
       const chatHistory = messages
         .filter(m => !m.content.startsWith('⏳') && !m.content.startsWith('⚙️'))
         .map(m => ({
-          role: m.isUser ? 'user' : 'assistant',
+          role: (m.isUser ? 'user' : 'assistant') as 'user' | 'assistant',
           content: m.content,
         }));
       const firstUserMsg = chatHistory.find(m => m.role === 'user');
@@ -670,7 +664,6 @@ export default function Dashboard() {
         )
       );
       setPipelineMsgId(null);
-      setIsGenerationActive(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasEnoughCredits, contract]);
@@ -1118,7 +1111,6 @@ export default function Dashboard() {
     activeStatus,
     !!(currentProject?.code?.trim()),
     currentPendingStep,
-    isGenerationActive,
   );
 
   // Project management functions

@@ -1,10 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { ENDPOINTS } from '@/config/api';
 import { apiClient } from '@/services/api';
 import { getAccessToken } from '@/services/api';
-import { tryRefresh } from '@/services/authService';
+import { wsHub } from '@/services/wsHub';
 import type {
   ContractStatus,
   ContractCode,
@@ -12,11 +11,12 @@ import type {
   ContractCreated,
   Network,
   Phase,
+  ChatMessagePayload,
 } from '@/lib/api';
 import type { ActionButtonState } from '@/types/dashboard';
+import { deriveAnimationStage } from './useContractStream';
 
 const TERMINAL: Phase[] = ['done', 'failed'];
-const RECONNECT_DELAYS = [1000, 2000, 5000, 10000];
 
 // ── Pure derivation ───────────────────────────────────────────────────────────
 
@@ -28,20 +28,20 @@ export type AnimationStage = 'generating' | 'building' | 'auditing' | 'deploying
  *
  * Rules:
  *  1. build_ok / audit_ok / program_id take priority over raw `phase`.
- *     This means stale WS heartbeats (e.g. phase='building' after build_ok=true)
- *     can NEVER re-arm an animation that has already finished.
- *  2. While a step is actively running (phase matches AND ok flag is false),
- *     return the loader button state.
- *  3. When idle, derive button monotonically from ok flags.
+ *     Stale WS heartbeats (e.g. phase='building' after build_ok=true) can
+ *     NEVER re-arm a finished animation.
+ *  2. The "generating" animation fires purely from backend signals:
+ *     phase ∈ {enriching, generating} AND next_step === null. Once the
+ *     pipeline parks at the build interrupt, next_step becomes 'build' and
+ *     the animation stops — even across reloads and project switches.
+ *  3. Optimistic `pendingStep` override fires FIRST to close the gap between
+ *     button click and the confirming heartbeat (prevents double-clicks).
  */
 export function deriveUIFromStatus(
   status: ContractStatus | null,
   hasCode: boolean,
   pendingStep?: 'build' | 'audit' | 'deploy' | null,
-  isGenerationActive?: boolean,
 ): { buttonState: ActionButtonState; animationStage: AnimationStage } {
-  // Optimistic override: immediately show loader between button click and the
-  // first WS heartbeat that confirms the phase changed. Prevents double-clicks.
   if (pendingStep === 'build'  && !status?.build_ok)  return { buttonState: 'building',   animationStage: 'building'   };
   if (pendingStep === 'audit'  && !status?.audit_ok)  return { buttonState: 'auditing',   animationStage: 'auditing'   };
   if (pendingStep === 'deploy' && !status?.program_id) return { buttonState: 'publishing', animationStage: 'deploying'  };
@@ -50,34 +50,8 @@ export function deriveUIFromStatus(
     return { buttonState: hasCode ? 'build' : 'inactive', animationStage: null };
   }
 
-  const { phase, build_ok, audit_ok, program_id } = status;
+  const animationStage = deriveAnimationStage(status);
 
-  // Derive animation stage — only when the corresponding step is NOT yet complete
-  let animationStage: AnimationStage = null;
-  // Show "generating" animation ONLY if this frontend actually started the
-  // generation in the current session. Prevents re-arming the animation when
-  // the user switches projects or reloads the page while the backend phase is
-  // still "enriching"/"generating" for an already-existing contract.
-  if (
-    isGenerationActive &&
-    (phase === 'enriching' || phase === 'generating')
-  ) {
-    animationStage = 'generating';
-  } else if (
-    !build_ok &&
-    (phase === 'building' || phase === 'build_fixing' || phase === 'learning')
-  ) {
-    animationStage = 'building';
-  } else if (
-    !audit_ok &&
-    (phase === 'auditing_static' || phase === 'auditing_llm' || phase === 'audit_fixing')
-  ) {
-    animationStage = 'auditing';
-  } else if (!program_id && phase === 'deploying') {
-    animationStage = 'deploying';
-  }
-
-  // While running → loader button overrides idle state
   if (animationStage === 'generating' || animationStage === 'building') {
     return { buttonState: 'building', animationStage };
   }
@@ -88,29 +62,32 @@ export function deriveUIFromStatus(
     return { buttonState: 'publishing', animationStage };
   }
 
-  // Idle — monotonically forward from ok flags
+  const { build_ok, audit_ok, program_id } = status;
   if (program_id) return { buttonState: 'upgrade',  animationStage: null };
-  if (audit_ok)   return { buttonState: 'publish',   animationStage: null };
-  if (build_ok)   return { buttonState: 'audit',     animationStage: null };
-  if (hasCode)    return { buttonState: 'build',     animationStage: null };
-  return           { buttonState: 'inactive',  animationStage: null };
+  if (audit_ok)   return { buttonState: 'publish',  animationStage: null };
+  if (build_ok)   return { buttonState: 'audit',    animationStage: null };
+  if (hasCode)    return { buttonState: 'build',    animationStage: null };
+  return           { buttonState: 'inactive', animationStage: null };
 }
 
 // ── hook ──────────────────────────────────────────────────────────────────────
 
+/**
+ * useContract — single-contract facade.
+ *
+ * WebSocket lifecycle is delegated to wsHub (ref-counted shared connections,
+ * auto-reconnect with backoff, fresh JWT on every reconnect). This hook owns
+ * only the lazy code/audit getters and create mutations.
+ */
 export function useContract(uid: string | null) {
-  const [status, setStatus]     = useState<ContractStatus | null>(null);
+  const [status, setStatus]       = useState<ContractStatus | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError]       = useState<string | null>(null);
+  const [error, setError]         = useState<string | null>(null);
 
   const [code, setCode]   = useState<ContractCode | null>(null);
   const [audit, setAudit] = useState<ContractAudit | null>(null);
 
-  const wsRef       = useRef<WebSocket | null>(null);
-  const attemptRef  = useRef(0);
-  const closedRef   = useRef(false);
-
-  // ── Reset all fetched data when uid changes (new contract) ──────────────────
+  // Reset fetched artifacts when uid changes.
   useEffect(() => {
     setCode(null);
     setAudit(null);
@@ -118,67 +95,28 @@ export function useContract(uid: string | null) {
     setError(null);
   }, [uid]);
 
-  // ── WebSocket lifecycle ──────────────────────────────────────────────────────
-  const connectWs = useCallback((contractUid: string, attempt = 0) => {
-    const token = getAccessToken();
-    if (!token) return;
-
-    closedRef.current = false;
-    const url = `${ENDPOINTS.WS_CONTRACT(contractUid)}?token=${token}`;
-    const ws  = new WebSocket(url);
-    wsRef.current = ws;
-
-    ws.onmessage = (evt) => {
-      try {
-        const msg = JSON.parse(evt.data as string) as ContractStatus;
-        setStatus(msg);
-        setError(null);
-        if (TERMINAL.includes(msg.phase)) {
-          ws.close(1000);
-        }
-      } catch { /* ignore malformed frame */ }
-    };
-
-    ws.onerror = () => setError('WebSocket error');
-
-    ws.onclose = (evt) => {
-      if (closedRef.current) return; // explicit close
-      if (evt.code === 1000) return; // normal close — done/failed
-
-      if (evt.code === 4001) {
-        // JWT expired — refresh and reconnect
-        tryRefresh().then((ok) => {
-          if (ok) connectWs(contractUid, attempt);
-          else    setError('Session expired — please log in again');
-        });
-        return;
-      }
-      if (evt.code === 4003) { setError('Access denied');        return; }
-      if (evt.code === 4004) { setError('Contract not found');   return; }
-
-      const delay = RECONNECT_DELAYS[Math.min(attempt, RECONNECT_DELAYS.length - 1)];
-      setTimeout(() => connectWs(contractUid, attempt + 1), delay);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+  // WS subscription via shared hub.
   useEffect(() => {
     if (!uid) return;
-    attemptRef.current = 0;
-    connectWs(uid);
+    const unsub = wsHub.subscribe(
+      `contract:${uid}`,
+      (data) => {
+        if (!data || typeof data !== 'object') return;
+        const msg = data as ContractStatus;
+        if (!('phase' in msg)) return;
+        setStatus(msg);
+        setError(null);
+      },
+      () => getAccessToken() ?? '',
+    );
+    return unsub;
+  }, [uid]);
 
-    return () => {
-      closedRef.current = true;
-      wsRef.current?.close(1000);
-    };
-  }, [uid, connectWs]);
-
-  // ── createContract ────────────────────────────────────────────────────────────
   const createContract = useCallback(
     async (
       prompt: string,
       network: Network = 'devnet',
-      opts?: { name?: string; chat_history?: Array<{ role: string; content: string }> },
+      opts?: { name?: string; chat_history?: ChatMessagePayload[] },
     ): Promise<ContractCreated> => {
       setIsLoading(true);
       setError(null);
@@ -187,9 +125,7 @@ export function useContract(uid: string | null) {
           prompt,
           network,
           name: opts?.name,
-          chat_history: opts?.chat_history as any,
-          // Frontend always uses step-mode: generate → user clicks Build →
-          // user clicks Audit → user clicks Deploy.
+          chat_history: opts?.chat_history,
           step_mode: true,
         });
         return result;
@@ -204,7 +140,6 @@ export function useContract(uid: string | null) {
     [],
   );
 
-  // ── createPasteContract ───────────────────────────────────────────────────────
   const createPasteContract = useCallback(
     async (
       code: string,
@@ -218,7 +153,6 @@ export function useContract(uid: string | null) {
           code,
           network,
           name: opts?.name,
-          // Paste mode always uses step-mode (paused before build from the start)
           step_mode: true,
         });
         return result;
@@ -233,7 +167,6 @@ export function useContract(uid: string | null) {
     [],
   );
 
-  // ── lazy getters (called when phase === "done") ───────────────────────────────
   const getCode = useCallback(async (): Promise<ContractCode> => {
     if (!uid) throw new Error('No contract uid');
     if (code) return code;
@@ -264,77 +197,47 @@ export function useContract(uid: string | null) {
 }
 
 /**
- * Manages N concurrent WebSocket connections — one per actively tracked project.
- * Does NOT close a WS when the user switches projects; only closes on terminal
- * phase or when a uid is removed from trackedUids.
+ * useMultiContract — streams N concurrent contracts (one per tracked project).
+ *
+ * Subscribes via wsHub per uid. When a contract hits a terminal phase, its
+ * subscription is dropped so we don't keep the connection alive needlessly.
+ * Reference counting in wsHub means if another hook also listens to the same
+ * contract:uid channel, the underlying WS stays open for them.
  */
 export function useMultiContract(
   trackedUids: Record<string, string>,
   onStatusChange: (projectId: string, status: ContractStatus) => void,
 ) {
-  const socketsRef = useRef<Map<string, WebSocket>>(new Map());
   const callbackRef = useRef(onStatusChange);
   callbackRef.current = onStatusChange;
 
   useEffect(() => {
-    const sockets = socketsRef.current;
-    const trackedProjectIds = Object.keys(trackedUids);
+    const unsubs = new Map<string, () => void>();
 
-    // Open new WS for newly tracked project IDs
-    for (const projectId of trackedProjectIds) {
-      if (sockets.has(projectId)) continue;
-      const contractUid = trackedUids[projectId];
-
-      const connect = (attempt = 0) => {
-        const token = getAccessToken();
-        if (!token) return;
-        const ws = new WebSocket(`${ENDPOINTS.WS_CONTRACT(contractUid)}?token=${token}`);
-        sockets.set(projectId, ws);
-
-        ws.onmessage = (evt) => {
-          try {
-            const msg = JSON.parse(evt.data as string) as ContractStatus;
-            callbackRef.current(projectId, msg);
-            if (TERMINAL.includes(msg.phase)) {
-              ws.close(1000);
-              sockets.delete(projectId);
+    for (const [projectId, contractUid] of Object.entries(trackedUids)) {
+      const unsub = wsHub.subscribe(
+        `contract:${contractUid}`,
+        (data) => {
+          if (!data || typeof data !== 'object') return;
+          const msg = data as ContractStatus;
+          if (!('phase' in msg)) return;
+          callbackRef.current(projectId, msg);
+          if (TERMINAL.includes(msg.phase)) {
+            const u = unsubs.get(projectId);
+            if (u) {
+              u();
+              unsubs.delete(projectId);
             }
-          } catch { /* ignore malformed frame */ }
-        };
-
-        ws.onerror = () => { sockets.delete(projectId); };
-
-        ws.onclose = (evt) => {
-          if (evt.code === 1000) return;
-          if (evt.code === 4001) {
-            tryRefresh().then(ok => {
-              if (ok) connect(attempt);
-            });
-            return;
           }
-          if (evt.code === 4003 || evt.code === 4004) return;
-          const delay = RECONNECT_DELAYS[Math.min(attempt, RECONNECT_DELAYS.length - 1)];
-          setTimeout(() => connect(attempt + 1), delay);
-        };
-      };
-      connect();
+        },
+        () => getAccessToken() ?? '',
+      );
+      unsubs.set(projectId, unsub);
     }
 
-    // Close WS for projects no longer tracked
-    for (const [projectId, ws] of sockets.entries()) {
-      if (!trackedUids[projectId]) {
-        ws.close(1000);
-        sockets.delete(projectId);
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackedUids]);
-
-  // Cleanup all sockets on unmount
-  useEffect(() => {
     return () => {
-      for (const ws of socketsRef.current.values()) ws.close(1000);
-      socketsRef.current.clear();
+      for (const u of unsubs.values()) u();
+      unsubs.clear();
     };
-  }, []);
+  }, [trackedUids]);
 }

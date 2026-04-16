@@ -85,6 +85,11 @@ export default function ChatScreen({
   const [mobileActiveTab, setMobileActiveTab] = useState<'chat' | 'code' | 'network'>('chat');
   const messagesEndRefDesktop = useRef<HTMLDivElement>(null);
   const messagesEndRefMobile = useRef<HTMLDivElement>(null);
+  // Tracks the last project uid + API code seen by the load effect.
+  // Used to distinguish project switches / initial async loads from live server updates
+  // (e.g. auto-fix after build) so we choose the right code source without clobbering user edits.
+  const prevProjectUidRef = useRef<string | null>(null);
+  const prevApiCodeRef = useRef<string>('');
 
   // Function for smooth scrolling to bottom - only within chat
   const scrollToBottom = () => {
@@ -191,58 +196,77 @@ export default function ChatScreen({
     }
   }, [contractCode, currentProject]);
 
-  // Load all project states when switching projects
+  // Load all project states. Fires on any change to currentProject (status/code/deployed/etc.)
+  // so sub-states stay in sync, but resolves the editor code via a conflict rule rather than
+  // letting API values blindly overwrite unsaved local edits.
   useEffect(() => {
-    if (currentProject) {
-      try {
-        // Code: prefer project.code (freshly fetched from API by Dashboard),
-        // fall back to localStorage cache (preserves unsaved user edits)
-        const apiCode = currentProject.code || '';
-        const cachedCode = typeof window !== 'undefined'
-          ? localStorage.getItem(`bumm_contract_code_${currentProject.uid}`) || ''
-          : '';
-        const resolvedCode = apiCode || cachedCode;
-        setContractCode(resolvedCode);
+    if (!currentProject) {
+      setContractCode('');
+      setLocalButtonState('inactive');
+      setIsContractDeployed(false);
+      setDeployedContractAddress(undefined);
+      setDeploymentDate(undefined);
+      setLastUpdateDate(undefined);
+      prevProjectUidRef.current = null;
+      prevApiCodeRef.current = '';
+      return;
+    }
 
-        // Deployment state from project object (source of truth)
-        const deployed = currentProject.isDeployed ?? false;
-        setIsContractDeployed(deployed);
-        setDeployedContractAddress(currentProject.contractAddress ?? undefined);
+    try {
+      const isProjectSwitch = prevProjectUidRef.current !== currentProject.uid;
+      const newApiCode = currentProject.code || '';
+      const prevApiCode = prevApiCodeRef.current;
+      const cachedCode = typeof window !== 'undefined'
+        ? localStorage.getItem(`bumm_contract_code_${currentProject.uid}`) || ''
+        : '';
 
-        // Dates from localStorage (UI-only, no backend equivalent)
-        if (typeof window !== 'undefined') {
-          const savedDeploymentDate = localStorage.getItem(`bumm_deployment_date_${currentProject.uid}`);
-          setDeploymentDate(savedDeploymentDate ? new Date(savedDeploymentDate) : undefined);
-          const savedUpdateDate = localStorage.getItem(`bumm_last_update_date_${currentProject.uid}`);
-          setLastUpdateDate(savedUpdateDate ? new Date(savedUpdateDate) : undefined);
-        }
+      // Distinguish "API code arrived for the first time" (project switch or async load
+      // after selection) from "backend pushed a new version" (auto-fix after build/audit).
+      // Only the latter should override local edits; the former preserves unsaved work.
+      const isLiveServerUpdate =
+        !isProjectSwitch &&
+        newApiCode !== '' &&
+        prevApiCode !== '' &&
+        newApiCode !== prevApiCode;
 
-        // Button state is now derived from backend via buttonStateProp (deriveUIFromStatus).
-        // Local fallback for initial render before first heartbeat arrives.
-        if (!buttonStateProp) {
-          if (deployed || currentProject.status === 'deployed') {
-            setLocalButtonState('upgrade');
-          } else if (currentProject.status === 'audited') {
-            setLocalButtonState('publish');
-          } else if (currentProject.status === 'built') {
-            setLocalButtonState('audit');
-          } else if (resolvedCode.trim()) {
-            setLocalButtonState('build');
-          } else {
-            setLocalButtonState('inactive');
-          }
-        }
-      } catch (err) {
-        console.warn('Failed to load project states:', err);
-        setContractCode('');
-        setLocalButtonState('inactive');
-        setIsContractDeployed(false);
-        setDeployedContractAddress(undefined);
-        setDeploymentDate(undefined);
-        setLastUpdateDate(undefined);
+      const resolvedCode = isLiveServerUpdate
+        ? newApiCode
+        : (cachedCode || newApiCode);
+      setContractCode(resolvedCode);
+
+      prevProjectUidRef.current = currentProject.uid;
+      prevApiCodeRef.current = newApiCode;
+
+      // Deployment state from project object (source of truth)
+      const deployed = currentProject.isDeployed ?? false;
+      setIsContractDeployed(deployed);
+      setDeployedContractAddress(currentProject.contractAddress ?? undefined);
+
+      // Dates from localStorage (UI-only, no backend equivalent)
+      if (typeof window !== 'undefined') {
+        const savedDeploymentDate = localStorage.getItem(`bumm_deployment_date_${currentProject.uid}`);
+        setDeploymentDate(savedDeploymentDate ? new Date(savedDeploymentDate) : undefined);
+        const savedUpdateDate = localStorage.getItem(`bumm_last_update_date_${currentProject.uid}`);
+        setLastUpdateDate(savedUpdateDate ? new Date(savedUpdateDate) : undefined);
       }
-    } else {
-      // No project selected — clear all states
+
+      // Button state is now derived from backend via buttonStateProp (deriveUIFromStatus).
+      // Local fallback for initial render before first heartbeat arrives.
+      if (!buttonStateProp) {
+        if (deployed || currentProject.status === 'deployed') {
+          setLocalButtonState('upgrade');
+        } else if (currentProject.status === 'audited') {
+          setLocalButtonState('publish');
+        } else if (currentProject.status === 'built') {
+          setLocalButtonState('audit');
+        } else if (resolvedCode.trim()) {
+          setLocalButtonState('build');
+        } else {
+          setLocalButtonState('inactive');
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load project states:', err);
       setContractCode('');
       setLocalButtonState('inactive');
       setIsContractDeployed(false);
@@ -250,7 +274,7 @@ export default function ChatScreen({
       setDeploymentDate(undefined);
       setLastUpdateDate(undefined);
     }
-  }, [currentProject]);
+  }, [currentProject, buttonStateProp]);
 
 
   // Save deployment state to localStorage
@@ -601,6 +625,7 @@ export default function ChatScreen({
             {/* Interactive Code Area - flex-1 to fill space */}
             <div className="flex-1 p-3 min-h-0">
             <InteractiveCodeEditor
+              key={currentProject?.uid ?? 'no-project'}
               initialCode={contractCode}
               onCodeChange={handleCodeChange}
               isGenerating={isGenerating || isPipelineGenerating}
@@ -786,6 +811,7 @@ export default function ChatScreen({
             {/* Interactive Code Area */}
             <div className="flex-1 p-2 min-h-0">
               <InteractiveCodeEditor
+                key={currentProject?.uid ?? 'no-project'}
                 initialCode={contractCode}
                 onCodeChange={handleCodeChange}
                 isGenerating={isGenerating}

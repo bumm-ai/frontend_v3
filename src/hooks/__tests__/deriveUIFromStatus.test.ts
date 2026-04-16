@@ -56,6 +56,15 @@ describe('deriveUIFromStatus — generation phases', () => {
     expect(result.animationStage).toBe('generating');
   });
 
+  it('phase=generating but next_step=build → NO animation (parked at interrupt)', () => {
+    const result = deriveUIFromStatus(
+      status({ phase: 'generating', next_step: 'build' }),
+      true,
+    );
+    expect(result.animationStage).toBeNull();
+    expect(result.buttonState).toBe('build');
+  });
+
   it('phase=generated, next_step=build → build button, no animation', () => {
     const result = deriveUIFromStatus(
       status({ phase: 'generated', next_step: 'build' }),

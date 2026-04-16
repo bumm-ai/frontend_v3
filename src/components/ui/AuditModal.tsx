@@ -2,10 +2,10 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Shield, AlertTriangle, CheckCircle, Search, FileText, Code, Zap } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiClient } from '@/services/api';
 import { tryRefresh } from '@/services/authService';
-import { fetchContractStatusAuthorized } from '@/services/contractStatusPoll';
+import { useContractStream } from '@/hooks/useContractStream';
 import { useFixDiff } from '@/hooks/useFixDiff';
 import { FixTimeline } from '@/components/fix/FixTimeline';
 
@@ -26,12 +26,7 @@ interface Vulnerability {
 
 interface AuditResult {
   securityScore: number;
-  vulnerabilities: {
-    critical: number;
-    high: number;
-    medium: number;
-    low: number;
-  };
+  vulnerabilities: { critical: number; high: number; medium: number; low: number };
   vulnerabilityList: Vulnerability[];
 }
 
@@ -45,17 +40,30 @@ const STEP_LABELS: Record<string, string> = {
   build_fixing:    'Rebuilding with Fixes',
 };
 
-export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid }: AuditModalProps) => {
+export const AuditModal = ({
+  isOpen,
+  onClose,
+  onComplete,
+  onAddMessage,
+  bummUid,
+}: AuditModalProps) => {
   const [currentPhase, setCurrentPhase] = useState('');
   const [isCompleted, setIsCompleted]   = useState(false);
   const [auditResult, setAuditResult]   = useState<AuditResult | null>(null);
   const [errorMsg, setErrorMsg]         = useState('');
   const [activeTab, setActiveTab]       = useState<'findings' | 'fixes'>('findings');
 
+  const onAddMessageRef = useRef(onAddMessage);
+  onAddMessageRef.current = onAddMessage;
+
+  // Share the wsHub connection Dashboard already has.
+  const { status } = useContractStream(isOpen ? (bummUid ?? null) : null);
+
   const { entries: fixEntries, isLoading: fixLoading, error: fixError } = useFixDiff(
-    isCompleted ? bummUid : undefined
+    isCompleted ? bummUid : undefined,
   );
 
+  // Reset when modal closes.
   useEffect(() => {
     if (!isOpen) {
       setCurrentPhase('');
@@ -63,96 +71,105 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
       setAuditResult(null);
       setErrorMsg('');
       setActiveTab('findings');
-      return;
     }
+  }, [isOpen]);
 
+  // Trigger audit when modal opens.
+  useEffect(() => {
+    if (!isOpen) return;
     if (!bummUid) {
       setErrorMsg('No contract ID found. Generate the contract first.');
       setIsCompleted(true);
       return;
     }
 
-    let cancelled = false;
+    const controller = new AbortController();
 
-    const runAudit = async () => {
+    const triggerAudit = async () => {
       try {
         await tryRefresh();
-        // Trigger the audit step — pipeline was paused before audit_static.
         await apiClient.triggerAudit(bummUid);
-
-        const maxAttempts = 180; // 6 min at 2s intervals
-        let attempts = 0;
-
-        while (!cancelled && attempts < maxAttempts) {
-          await new Promise(r => setTimeout(r, 2000));
-          attempts++;
-
-          const res = await fetchContractStatusAuthorized(bummUid);
-          if (!res.ok) continue;
-
-          const data = await res.json();
-          const phase: string = data.phase ?? '';
-          setCurrentPhase(phase);
-
-          // Audit is done when pipeline paused before deploy (next_step="deploy")
-          // or when audit phases are finished.
-          const auditDone = data.next_step === 'deploy' ||
-            (data.phase === 'done') ||
-            (data.build_ok && !AUDIT_PHASES.includes(phase) && !['building', 'build_fixing'].includes(phase) && phase !== 'generating' && phase !== 'enriching' && phase !== 'not_started');
-
-          if (auditDone) {
-            // Fetch detailed audit results from the DB
-            const auditData = await apiClient.getContractAudit(bummUid);
-
-            // Parse vulnerabilities from backend response
-            const vulns: Array<{ severity: string; title: string; description: string }> =
-              Array.isArray(auditData.vulns)
-                ? (auditData.vulns as Array<{ severity: string; title: string; description: string }>)
-                : [];
-
-            const critical = vulns.filter(v => v.severity === 'critical').length;
-            const high     = vulns.filter(v => v.severity === 'high').length;
-            const medium   = vulns.filter(v => v.severity === 'medium').length;
-            const low      = vulns.filter(v => ['low', 'info'].includes(v.severity)).length;
-            const score    = Math.max(0, 100 - critical * 25 - high * 15 - medium * 5 - low);
-
-            const result: AuditResult = {
-              securityScore: score,
-              vulnerabilities: { critical, high, medium, low },
-              vulnerabilityList: vulns.map(v => ({
-                name: v.title || v.description || 'Unknown issue',
-                severity: (v.severity as Vulnerability['severity']) || 'low',
-              })),
-            };
-
-            setAuditResult(result);
-            setIsCompleted(true);
-            onAddMessage?.(`Audit complete! Score: ${score}/100 (${vulns.length} issues found)`);
-            return;
-          }
-
-          if (phase === 'failed') {
-            throw new Error(data.error || 'Audit pipeline failed');
-          }
-        }
-
-        throw new Error('Audit timed out after 6 minutes');
       } catch (err) {
-        if (cancelled) return;
-        const msg = err instanceof Error ? err.message : 'Audit failed';
-        setErrorMsg(msg);
-        setIsCompleted(true);
-        setAuditResult({
-          securityScore: 0,
-          vulnerabilities: { critical: 0, high: 0, medium: 0, low: 0 },
-          vulnerabilityList: [{ name: msg, severity: 'critical' }],
-        });
+        if (!controller.signal.aborted) {
+          const msg = err instanceof Error ? err.message : 'Failed to trigger audit';
+          setErrorMsg(msg);
+          setIsCompleted(true);
+          setAuditResult({
+            securityScore: 0,
+            vulnerabilities: { critical: 0, high: 0, medium: 0, low: 0 },
+            vulnerabilityList: [{ name: msg, severity: 'critical' }],
+          });
+        }
       }
     };
 
-    runAudit();
-    return () => { cancelled = true; };
-  }, [isOpen, bummUid, onAddMessage]);
+    triggerAudit();
+    return () => controller.abort();
+  }, [isOpen, bummUid]);
+
+  // Watch WS status for completion — replaces polling loop.
+  useEffect(() => {
+    if (!isOpen || !status || isCompleted) return;
+
+    const { phase, next_step, build_ok } = status;
+    setCurrentPhase(phase ?? '');
+
+    const auditDone =
+      next_step === 'deploy' ||
+      phase === 'done' ||
+      (build_ok &&
+        !AUDIT_PHASES.includes(phase ?? '') &&
+        !['building', 'build_fixing', 'generating', 'enriching', 'not_started'].includes(phase ?? ''));
+
+    if (auditDone) {
+      // Fetch detailed results once from the DB.
+      const controller = new AbortController();
+
+      apiClient.getContractAudit(bummUid!).then((auditData) => {
+        if (controller.signal.aborted) return;
+
+        const vulns: Array<{ severity: string; title: string; description: string }> =
+          Array.isArray(auditData.vulns)
+            ? (auditData.vulns as Array<{ severity: string; title: string; description: string }>)
+            : [];
+
+        const critical = vulns.filter(v => v.severity === 'critical').length;
+        const high     = vulns.filter(v => v.severity === 'high').length;
+        const medium   = vulns.filter(v => v.severity === 'medium').length;
+        const low      = vulns.filter(v => ['low', 'info'].includes(v.severity)).length;
+        const score    = Math.max(0, 100 - critical * 25 - high * 15 - medium * 5 - low);
+
+        setAuditResult({
+          securityScore: score,
+          vulnerabilities: { critical, high, medium, low },
+          vulnerabilityList: vulns.map(v => ({
+            name: v.title || v.description || 'Unknown issue',
+            severity: (v.severity as Vulnerability['severity']) || 'low',
+          })),
+        });
+        setIsCompleted(true);
+        onAddMessageRef.current?.(`Audit complete! Score: ${score}/100 (${vulns.length} issues found)`);
+      }).catch((err) => {
+        if (controller.signal.aborted) return;
+        const msg = err instanceof Error ? err.message : 'Failed to fetch audit results';
+        setErrorMsg(msg);
+        setIsCompleted(true);
+      });
+
+      return () => controller.abort();
+    }
+
+    if (phase === 'failed') {
+      const msg = status.error || 'Audit pipeline failed';
+      setErrorMsg(msg);
+      setIsCompleted(true);
+      setAuditResult({
+        securityScore: 0,
+        vulnerabilities: { critical: 0, high: 0, medium: 0, low: 0 },
+        vulnerabilityList: [{ name: msg, severity: 'critical' }],
+      });
+    }
+  }, [status, isOpen, isCompleted, bummUid]);
 
   const getScoreColor = (score: number) => {
     if (score >= 90) return 'text-green-400';
@@ -177,16 +194,11 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
   return (
     <AnimatePresence>
       <div className="fixed inset-0 z-50 flex items-center justify-center">
-        {/* Backdrop — no dismiss while audit is in progress */}
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           className="absolute inset-0 bg-black/70 backdrop-blur-sm"
           onClick={isCompleted ? onClose : undefined}
         />
-
-        {/* Modal */}
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -233,10 +245,10 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
                 {/* Phase steps */}
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { phase: 'auditing_static', icon: Search,      label: 'Static Analysis' },
-                    { phase: 'auditing_llm',    icon: Zap,         label: 'LLM Review' },
-                    { phase: 'audit_fixing',    icon: Code,        label: 'Fix Vulnerabilities' },
-                    { phase: 'done',            icon: FileText,    label: 'Generate Report' },
+                    { phase: 'auditing_static', icon: Search,   label: 'Static Analysis' },
+                    { phase: 'auditing_llm',    icon: Zap,      label: 'LLM Review' },
+                    { phase: 'audit_fixing',    icon: Code,     label: 'Fix Vulnerabilities' },
+                    { phase: 'done',            icon: FileText, label: 'Generate Report' },
                   ].map(({ phase, icon: Icon, label }) => {
                     const isDone = currentPhase === 'done' ||
                       (AUDIT_PHASES.indexOf(currentPhase) > AUDIT_PHASES.indexOf(phase));
@@ -245,11 +257,9 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
                       <div
                         key={phase}
                         className={`p-2 rounded-md border transition-all ${
-                          isActive
-                            ? 'border-orange-500/30 bg-orange-500/5'
-                            : isDone
-                            ? 'border-green-500/30 bg-green-500/5'
-                            : 'border-[#333] bg-[#191919]/50'
+                          isActive  ? 'border-orange-500/30 bg-orange-500/5' :
+                          isDone    ? 'border-green-500/30 bg-green-500/5' :
+                                      'border-[#333] bg-[#191919]/50'
                         }`}
                       >
                         <div className="flex items-center gap-2">
@@ -329,7 +339,7 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
                           }`}
                         >
                           {tab === 'findings'
-                            ? `Findings (${auditResult ? Object.values(auditResult.vulnerabilities).reduce((s, c) => s + c, 0) : 0})`
+                            ? `Findings (${Object.values(auditResult.vulnerabilities).reduce((s, c) => s + c, 0)})`
                             : 'Applied Fixes'}
                         </button>
                       ))}
