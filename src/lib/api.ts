@@ -106,6 +106,8 @@ export interface ChatMessagePayload {
 
 export interface ChatRequest {
   messages: ChatMessagePayload[];
+  /** UID of an existing contract. When set, backend uses advisor mode (never ready=true). */
+  contract_uid?: string;
 }
 
 export interface ChatResponse {
@@ -188,4 +190,34 @@ export interface JwtPayload {
   iat: number;
   jti: string;
   type: 'access' | 'refresh';
+}
+
+// ── Code History (for diff view) ──────────────────────────────────────────────
+
+export interface AppliedFixItem {
+  source: 'knowledge_base' | 'llm_generated';
+  kb_entry_id: string | null;
+  error_pattern: string;
+  fix_description: string;
+  was_successful: boolean | null;
+}
+
+export interface CodeVersionItem {
+  index: number;
+  code: string;
+  linked_fix: AppliedFixItem | null;
+}
+
+export interface CodeHistoryResponse {
+  bumm_uid: string;
+  versions: CodeVersionItem[];
+}
+
+// ── Credits stream ────────────────────────────────────────────────────────────
+
+export interface CreditsStreamEvent {
+  balance?: number;
+  reason?: string;
+  tx_ref?: string | null;
+  type?: 'heartbeat';
 }

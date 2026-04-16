@@ -16,7 +16,9 @@ import type {
   CreditRatesResponse,
   DeployEstimate,
   PurchaseResponse,
+  CodeHistoryResponse,
 } from '@/lib/api';
+import { balanceBus } from '@/services/balanceBus';
 
 // ── Token helpers ─────────────────────────────────────────────────────────────
 
@@ -113,10 +115,10 @@ export class ApiClient {
 
   // ── Chat ──────────────────────────────────────────────────────────────────
 
-  async chatMessage(messages: ChatMessagePayload[]): Promise<ChatResponse> {
+  async chatMessage(messages: ChatMessagePayload[], contractUid?: string): Promise<ChatResponse> {
     return apiFetch<ChatResponse>(ENDPOINTS.CHAT, {
       method: 'POST',
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages, ...(contractUid ? { contract_uid: contractUid } : {}) }),
     });
   }
 
@@ -199,6 +201,10 @@ export class ApiClient {
     return apiFetch(ENDPOINTS.CONTRACT_FIXES(uid));
   }
 
+  async getCodeHistory(uid: string): Promise<CodeHistoryResponse> {
+    return apiFetch(`/api/v1/contracts/${uid}/code/history`);
+  }
+
   async saveContractChat(uid: string, messages: Array<Record<string, unknown>>): Promise<{ status: string; message_count: number }> {
     return apiFetch(ENDPOINTS.CONTRACT_CHAT(uid), {
       method: 'PUT',
@@ -213,10 +219,13 @@ export class ApiClient {
   }
 
   async purchaseCredits(solTxSignature: string): Promise<PurchaseResponse> {
-    return apiFetch(ENDPOINTS.CREDITS_PURCHASE, {
+    const res = await apiFetch<PurchaseResponse>(ENDPOINTS.CREDITS_PURCHASE, {
       method: 'POST',
       body: JSON.stringify({ sol_tx_signature: solTxSignature }),
     });
+    // Emit new balance so useCredits updates immediately
+    balanceBus.emit(res.new_balance);
+    return res;
   }
 
   async getCreditHistory(limit = 50, offset = 0): Promise<CreditHistoryResponse> {

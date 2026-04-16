@@ -7,6 +7,7 @@ import { DancingDotsLoader } from './DancingDotsLoader';
 import { apiClient } from '@/services/api';
 import { tryRefresh } from '@/services/authService';
 import { fetchContractStatusAuthorized } from '@/services/contractStatusPoll';
+import { BuildLogStream } from '@/components/build/BuildLogStream';
 
 interface BuildModalProps {
   isOpen: boolean;
@@ -37,7 +38,6 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
   const [stages, setStages]           = useState<BuildStage[]>(makeStages());
   const [buildStatus, setBuildStatus] = useState<'idle' | 'building' | 'success' | 'error'>('idle');
   const [errorMsg, setErrorMsg]       = useState('');
-  const [buildLogs, setBuildLogs]     = useState('');
 
   const updateStage = useCallback((index: number, status: StageStatus) => {
     setStages(prev => prev.map((s, i) => i === index ? { ...s, status } : s));
@@ -55,7 +55,6 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
     setStages(makeStages());
     setBuildStatus('building');
     setErrorMsg('');
-    setBuildLogs('');
     updateStage(0, 'active');
 
     try {
@@ -90,7 +89,6 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
 
         if (buildDone) {
           setStages(prev => prev.map(s => ({ ...s, status: 'completed' as StageStatus })));
-          setBuildLogs('Build successful ✓');
           setBuildStatus('success');
           onAddMessage?.('Build successful! Contract compiled and ready for audit.');
           return;
@@ -176,6 +174,14 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
                       </div>
                     ))}
                   </div>
+                  {/* Live log stream */}
+                  {bummUid && (
+                    <BuildLogStream
+                      uid={bummUid}
+                      active={buildStatus === 'building'}
+                      className="mt-2"
+                    />
+                  )}
                 </div>
               )}
 
@@ -185,10 +191,8 @@ export const BuildModal = ({ isOpen, onClose, onComplete, contractCode, onAddMes
                   <CheckCircle className="w-10 h-10 text-green-400 mx-auto" />
                   <h3 className="text-base font-semibold text-white">Build Successful!</h3>
                   <p className="text-gray-400 text-xs">Contract compiled and ready for audit</p>
-                  {buildLogs && (
-                    <div className="bg-[#191919] rounded p-2 text-left max-h-32 overflow-y-auto">
-                      <pre className="text-xs text-gray-400 whitespace-pre-wrap">{buildLogs.substring(0, 500)}</pre>
-                    </div>
+                  {bummUid && (
+                    <BuildLogStream uid={bummUid} active={false} className="mt-2 text-left" />
                   )}
                   <button onClick={() => { onComplete(); onClose(); }}
                     className="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-sm">

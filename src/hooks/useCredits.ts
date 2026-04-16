@@ -3,7 +3,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { apiClient, getAccessToken } from '@/services/api';
-import type { BalanceResponse, PurchaseResponse, CreditRatesResponse } from '@/lib/api';
+import type { BalanceResponse, PurchaseResponse, CreditRatesResponse, CreditsStreamEvent } from '@/lib/api';
+import { wsHub } from '@/services/wsHub';
+import { balanceBus } from '@/services/balanceBus';
 
 // Default rates: 0.1 SOL = 2000 credits → 1 SOL = 20,000 credits
 const DEFAULT_CREDITS_PER_SOL = 20_000;
@@ -61,7 +63,33 @@ export function useCredits() {
     }
   }, []);
 
-  // ── load on wallet connect — only if JWT token exists ────────────────────────
+  // ── Subscribe to balance bus (mutations push new balance here) ────────────────
+  useEffect(() => {
+    return balanceBus.subscribe((n) => {
+      setBalance(n);
+    });
+  }, []);
+
+  // ── Subscribe to live credit updates via WebSocket ────────────────────────────
+  useEffect(() => {
+    const token = getAccessToken();
+    if (!connected || !token) return;
+
+    const unsub = wsHub.subscribe(
+      'credits',
+      (raw) => {
+        const event = raw as CreditsStreamEvent;
+        if (typeof event.balance === 'number') {
+          setBalance(event.balance);
+        }
+      },
+      token,
+    );
+
+    return unsub;
+  }, [connected]);
+
+  // ── Initial load on wallet connect ───────────────────────────────────────────
   useEffect(() => {
     if (connected && getAccessToken()) {
       refetch().catch(() => {});

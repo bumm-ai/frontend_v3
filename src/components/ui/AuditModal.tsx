@@ -6,6 +6,8 @@ import { useState, useEffect } from 'react';
 import { apiClient } from '@/services/api';
 import { tryRefresh } from '@/services/authService';
 import { fetchContractStatusAuthorized } from '@/services/contractStatusPoll';
+import { useFixDiff } from '@/hooks/useFixDiff';
+import { FixTimeline } from '@/components/fix/FixTimeline';
 
 interface AuditModalProps {
   isOpen: boolean;
@@ -48,6 +50,11 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
   const [isCompleted, setIsCompleted]   = useState(false);
   const [auditResult, setAuditResult]   = useState<AuditResult | null>(null);
   const [errorMsg, setErrorMsg]         = useState('');
+  const [activeTab, setActiveTab]       = useState<'findings' | 'fixes'>('findings');
+
+  const { entries: fixEntries, isLoading: fixLoading, error: fixError } = useFixDiff(
+    isCompleted ? bummUid : undefined
+  );
 
   useEffect(() => {
     if (!isOpen) {
@@ -55,6 +62,7 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
       setIsCompleted(false);
       setAuditResult(null);
       setErrorMsg('');
+      setActiveTab('findings');
       return;
     }
 
@@ -98,7 +106,9 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
 
             // Parse vulnerabilities from backend response
             const vulns: Array<{ severity: string; title: string; description: string }> =
-              Array.isArray(auditData.vulns) ? auditData.vulns as any[] : [];
+              Array.isArray(auditData.vulns)
+                ? (auditData.vulns as Array<{ severity: string; title: string; description: string }>)
+                : [];
 
             const critical = vulns.filter(v => v.severity === 'critical').length;
             const high     = vulns.filter(v => v.severity === 'high').length;
@@ -306,7 +316,27 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
                       </div>
                     </div>
 
-                    {auditResult.vulnerabilityList.length > 0 && (
+                    {/* Tab bar */}
+                    <div className="flex border-b border-[#333] mb-3">
+                      {(['findings', 'fixes'] as const).map((tab) => (
+                        <button
+                          key={tab}
+                          onClick={() => setActiveTab(tab)}
+                          className={`px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
+                            activeTab === tab
+                              ? 'text-white border-b-2 border-orange-500'
+                              : 'text-gray-500 hover:text-gray-300'
+                          }`}
+                        >
+                          {tab === 'findings'
+                            ? `Findings (${auditResult ? Object.values(auditResult.vulnerabilities).reduce((s, c) => s + c, 0) : 0})`
+                            : 'Applied Fixes'}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Tab content */}
+                    {activeTab === 'findings' && auditResult.vulnerabilityList.length > 0 && (
                       <div className="bg-[#191919] border border-[#333] rounded-lg max-h-40 overflow-y-auto">
                         <div className="p-2 border-b border-[#333]">
                           <h4 className="text-xs font-medium text-white">Detected Issues</h4>
@@ -322,6 +352,9 @@ export const AuditModal = ({ isOpen, onClose, onComplete, onAddMessage, bummUid 
                           ))}
                         </div>
                       </div>
+                    )}
+                    {activeTab === 'fixes' && bummUid && (
+                      <FixTimeline entries={fixEntries} isLoading={fixLoading} error={fixError} />
                     )}
                   </div>
                 )}

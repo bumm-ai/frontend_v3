@@ -36,6 +36,10 @@ export const ENDPOINTS = {
   CREDITS_HISTORY:  '/api/v1/credits/history',
   CREDITS_RATES:    '/api/v1/credits/rates',
   WS_CONTRACT:      (uid: string) => `${WS_BASE}/ws/contracts/${uid}`,
+  WS_CREDITS:       `${WS_BASE}/ws/credits`,
+  // Connects directly to the backend (bypasses Next.js proxy which buffers streams)
+  // Token passed as ?token= query param since EventSource cannot set headers.
+  LOGS_STREAM:      (uid: string) => `${API_BASE}/api/v1/contracts/${uid}/logs/stream`,
 } as const;
 
 // Legacy v2 endpoints — kept for backward compat with existing UI components.
