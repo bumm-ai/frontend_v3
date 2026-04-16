@@ -706,16 +706,9 @@ export default function Dashboard() {
       isUser: false,
     }]);
 
-    // 4. Call chat API.
-    // Read via ref to get the always-current project even if state updates raced
-    // between the time the user pressed Send and now (e.g. during project switch).
-    // Pass contract_uid so the backend switches to "existing contract advisor" mode
-    // and is hard-forced to never return ready=true server-side.
-    const projectAtSendTime = currentProjectRef.current;
-    const existingContractUid =
-      projectAtSendTime?.bummUid ?? projectAtSendTime?.uid ?? undefined;
+    // 4. Call chat API
     try {
-      const chatResp = await apiClient.chatMessage(history, existingContractUid);
+      const chatResp = await apiClient.chatMessage(history);
 
       // Replace typing indicator with actual AI response
       setMessages(prev =>
@@ -726,12 +719,8 @@ export default function Dashboard() {
         )
       );
 
-      // 5. Auto-launch pipeline ONLY for the blank "new chat" flow — no project at all
-      // (or a never-persisted stub). Re-read the ref: if project appeared while the
-      // chat API was in-flight (e.g. race during switch) we still must NOT re-generate.
-      const projectNow = currentProjectRef.current;
-      const isNewContractFlow = !projectNow || projectNow.uid.startsWith('stub-');
-      if (chatResp.ready && chatResp.enriched_prompt && isNewContractFlow) {
+      // 5. If AI says ready → launch the pipeline automatically
+      if (chatResp.ready && chatResp.enriched_prompt) {
         await launchPipeline(chatResp.enriched_prompt);
       }
     } catch (err) {
