@@ -17,7 +17,7 @@ import { isGenerationCommand } from '@/utils/generationCommands';
 
 interface ChatScreenProps {
   messages: ChatMessage[];
-  onSendMessage: (message: string, currentContractCode?: string, opts?: { isGenerationCommand?: boolean; activeProjectUid?: string | null }) => void;
+  onSendMessage: (message: string, currentContractCode?: string, opts?: { isGenerationCommand?: boolean }) => void;
   onAddAIMessage: (message: string) => void;
   onGenerateContract?: (description: string) => Promise<Project>;
   onCreateProject?: (name: string) => Promise<Project>;
@@ -323,10 +323,7 @@ export default function ChatScreen({
   const handleSend = () => {
     if (inputValue.trim()) {
       const isGenerationCmd = isGenerationCommand(inputValue);
-      onSendMessage(inputValue.trim(), contractCode, {
-        isGenerationCommand: isGenerationCmd,
-        activeProjectUid: currentProject?.bummUid ?? currentProject?.uid ?? null,
-      });
+      onSendMessage(inputValue.trim(), contractCode, { isGenerationCommand: isGenerationCmd });
       setInputValue('');
       
       // Check generation commands and start animation

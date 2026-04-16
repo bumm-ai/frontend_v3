@@ -10,6 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import { useContract, useMultiContract, deriveUIFromStatus } from '@/hooks/useContract';
 import { apiClient } from '@/services/api';
+import { isGenerationCommand } from '@/utils/generationCommands';
 import { tryRefresh } from '@/services/authService';
 import type { ChatMessagePayload } from '@/lib/api';
 // import { WalletDebug } from '../debug/WalletDebug';
@@ -685,7 +686,7 @@ export default function Dashboard() {
   const handleSendMessage = async (
     content: string,
     currentContractCode?: string,
-    opts?: { isGenerationCommand?: boolean; activeProjectUid?: string | null },
+    opts?: { isGenerationCommand?: boolean },
   ) => {
     // 1. Add user message to chat UI
     setMessages(prev => [...prev, {
@@ -731,8 +732,7 @@ export default function Dashboard() {
     // Pass contract_uid so the backend switches to "existing contract advisor" mode
     // and is hard-forced to never return ready=true server-side.
     const existingContractUid =
-      opts?.activeProjectUid
-      ?? viewedContractUidRef.current
+      viewedContractUidRef.current
       ?? currentProjectRef.current?.bummUid
       ?? currentProjectRef.current?.uid
       ?? undefined;
@@ -752,16 +752,18 @@ export default function Dashboard() {
       // (or a never-persisted stub). Re-read the ref: if project appeared while the
       // chat API was in-flight (e.g. race during switch) we still must NOT re-generate.
       const viewedUid =
-        opts?.activeProjectUid
-        ?? viewedContractUidRef.current
+        viewedContractUidRef.current
         ?? currentProjectRef.current?.bummUid
         ?? currentProjectRef.current?.uid
         ?? null;
       const isNewContractFlow = !viewedUid || viewedUid.startsWith('stub-');
+      const isExplicitGenerationRequest =
+        opts?.isGenerationCommand ?? isGenerationCommand(content);
       if (
         chatResp.ready
         && chatResp.enriched_prompt
         && isNewContractFlow
+        && isExplicitGenerationRequest
       ) {
         await launchPipeline(chatResp.enriched_prompt);
       }
