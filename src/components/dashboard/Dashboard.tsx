@@ -10,6 +10,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import { useContract, useMultiContract, deriveUIFromStatus } from '@/hooks/useContract';
 import { apiClient } from '@/services/api';
+import { isGenerationCommand } from '@/utils/generationCommands';
 import { tryRefresh } from '@/services/authService';
 import type { ChatMessagePayload } from '@/lib/api';
 // import { WalletDebug } from '../debug/WalletDebug';
@@ -682,7 +683,11 @@ export default function Dashboard() {
   }, [hasEnoughCredits, contract]);
 
   // ── Main send handler: chat-first → pipeline when ready ─────────────────
-  const handleSendMessage = async (content: string, currentContractCode?: string) => {
+  const handleSendMessage = async (
+    content: string,
+    currentContractCode?: string,
+    opts?: { isGenerationCommand?: boolean },
+  ) => {
     // 1. Add user message to chat UI
     setMessages(prev => [...prev, {
       id: generateUniqueMessageId(),
@@ -752,7 +757,14 @@ export default function Dashboard() {
         ?? currentProjectRef.current?.uid
         ?? null;
       const isNewContractFlow = !viewedUid || viewedUid.startsWith('stub-');
-      if (chatResp.ready && chatResp.enriched_prompt && isNewContractFlow) {
+      const isExplicitGenerationRequest =
+        opts?.isGenerationCommand ?? isGenerationCommand(content);
+      if (
+        chatResp.ready
+        && chatResp.enriched_prompt
+        && isNewContractFlow
+        && isExplicitGenerationRequest
+      ) {
         await launchPipeline(chatResp.enriched_prompt);
       }
     } catch (err) {
