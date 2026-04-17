@@ -195,10 +195,18 @@ NEXT_PUBLIC_WS_URL=ws://localhost:8080
 
 ---
 
+## Weekly dev reports (hackathon / stakeholders)
+
+- **How to write:** **`docs/WEEKLY_DEV_LOG.md`** — each report should **continue** the previous one (delta + logical next step), not restate the entire stack every time.
+- **Full journey (4 parts, start → today):**  
+  **[Week 1](./docs/DEV_LOG_BUMM_WEEK_01.md)** · **[Week 2](./docs/DEV_LOG_BUMM_WEEK_02.md)** · **[Week 3](./docs/DEV_LOG_BUMM_WEEK_03.md)** · **[Week 4 — current state](./docs/DEV_LOG_BUMM_WEEK_04.md)** — insert real dates in each file; Week 4 is the **as-of-today** snapshot.
+
+---
+
 ## Known Gaps / Next Steps
 
 | Item | Priority | Notes |
 |------|----------|-------|
-| KB Seed Sprint | Medium | Expand `build_errors.json` to ~50 entries, add `generation_skeletons.json`, `deploy_knowledge.json` |
+| KB / internal libraries (roadmap) | Medium | Commercial track — scope not detailed in public docs |
 | `user_sol_balance` display | Low | Already filled by backend; frontend needs to show it in deploy confirm modal |
 | E2E tests | Low | Blocked by Phantom wallet bootstrap — needs mock auth adapter or Playwright wallet stub |

@@ -53,7 +53,9 @@ export type Phase =
   | 'deploying'
   | 'learning'
   | 'done'
-  | 'failed';
+  | 'failed'
+  | 'cancelled'
+  | 'paused_degraded';
 
 export const TERMINAL_PHASES: Phase[] = ['done', 'failed'];
 
@@ -68,6 +70,14 @@ export interface ContractStatus {
   error: string | null;
   // Step-mode: next step waiting to be triggered, or null if pipeline running/done.
   next_step: 'build' | 'audit' | 'deploy' | null;
+  // Stage-report summary fields — used by useStageReports to build chat entries.
+  build_errors_count?: number;
+  top_error_codes?: string[];
+  vulns_by_severity?: Record<string, number>;
+  fixes_applied_count?: number;
+  last_fix_description?: string | null;
+  last_fix_source?: string | null;
+  pause_report?: string | null;
 }
 
 export interface ContractCode {

@@ -136,7 +136,12 @@ export function useContractStream(uid: string | null): ContractStream {
         // Backend closes WS with code 1000 on terminal phases. Without this,
         // wsHub reconnects immediately and gets another ws_pipeline_complete →
         // infinite reconnect loop.
-        if (msg.phase === 'done' || msg.phase === 'failed') {
+        if (
+          msg.phase === 'done' ||
+          msg.phase === 'failed' ||
+          msg.phase === 'cancelled' ||
+          msg.phase === 'paused_degraded'
+        ) {
           setTimeout(() => unsub?.(), 0);
         }
       },

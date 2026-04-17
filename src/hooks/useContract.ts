@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { apiClient } from '@/services/api';
 import { getAccessToken } from '@/services/api';
 import { wsHub } from '@/services/wsHub';
@@ -14,7 +14,7 @@ import type {
   ChatMessagePayload,
 } from '@/lib/api';
 import type { ActionButtonState } from '@/types/dashboard';
-import { deriveAnimationStage } from './useContractStream';
+import { deriveAnimationStage, useContractStream } from './useContractStream';
 
 const TERMINAL: Phase[] = ['done', 'failed'];
 
@@ -80,7 +80,11 @@ export function deriveUIFromStatus(
  * only the lazy code/audit getters and create mutations.
  */
 export function useContract(uid: string | null) {
-  const [status, setStatus]       = useState<ContractStatus | null>(null);
+  // Status is sourced from useContractStream: single shared subscription via
+  // wsHub (ref-counted), REST seed on uid change, and an in-memory cache so
+  // project switches render immediately without a WS round-trip.
+  const { status } = useContractStream(uid);
+
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError]         = useState<string | null>(null);
 
@@ -91,25 +95,7 @@ export function useContract(uid: string | null) {
   useEffect(() => {
     setCode(null);
     setAudit(null);
-    setStatus(null);
     setError(null);
-  }, [uid]);
-
-  // WS subscription via shared hub.
-  useEffect(() => {
-    if (!uid) return;
-    const unsub = wsHub.subscribe(
-      `contract:${uid}`,
-      (data) => {
-        if (!data || typeof data !== 'object') return;
-        const msg = data as ContractStatus;
-        if (!('phase' in msg)) return;
-        setStatus(msg);
-        setError(null);
-      },
-      () => getAccessToken() ?? '',
-    );
-    return unsub;
   }, [uid]);
 
   const createContract = useCallback(

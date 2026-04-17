@@ -14,6 +14,7 @@ import { SmartActionButton } from '../ui/SmartActionButton';
 import { ChatMessage, CodeSource, ActionButtonState, Project, User } from '@/types/dashboard';
 import type { AnimationStage } from '@/hooks/useContract';
 import { isGenerationCommand } from '@/utils/generationCommands';
+import { MarkdownMessage } from '../chat/MarkdownMessage';
 
 interface ChatScreenProps {
   messages: ChatMessage[];
@@ -28,11 +29,9 @@ interface ChatScreenProps {
   onSelectProject?: (project: Project) => void;
   onRenameProject?: (project: Project, newName: string) => void;
   onDeleteProject?: (project: Project) => void;
-  onArchiveProject?: (project: Project) => void;
-  onDuplicateProject?: (project: Project) => void;
-  onCreateGroup?: (project: Project) => void;
-  onAddToGroup?: (project: Project) => void;
-  onToggleVisibility?: (project: Project) => void;
+  onStopProject?: (project: Project) => void;
+  onForkProject?: (project: Project) => void;
+  onShareLinkProject?: (project: Project) => void;
   onExportProject?: (project: Project) => void;
   isBuilding?: boolean;
   currentProject?: Project | null;
@@ -61,11 +60,9 @@ export default function ChatScreen({
   onSelectProject,
   onRenameProject,
   onDeleteProject,
-  onArchiveProject,
-  onDuplicateProject,
-  onCreateGroup,
-  onAddToGroup,
-  onToggleVisibility,
+  onStopProject,
+  onForkProject,
+  onShareLinkProject,
   onExportProject,
   isBuilding = false,
   currentProject,
@@ -557,7 +554,11 @@ export default function ChatScreen({
                       ? 'bg-gradient-to-r from-orange-500/20 to-red-500/20 border border-orange-500/30'
                       : 'bg-[#191919] border border-[#333]'
                   }`}>
-                    <div className="text-white text-xs leading-relaxed">{message.content}</div>
+                    {message.isUser ? (
+                      <div className="text-white text-xs leading-relaxed whitespace-pre-wrap break-words">{message.content}</div>
+                    ) : (
+                      <MarkdownMessage content={message.content} />
+                    )}
                     {message.codeSnippet && (
                       <div className="mt-1.5 bg-black/50 rounded p-1.5 font-mono text-xs text-green-400">
                         {message.codeSnippet}
@@ -693,11 +694,9 @@ export default function ChatScreen({
               onCreateNew={onCreateNew}
               onRenameProject={onRenameProject}
               onDeleteProject={onDeleteProject}
-              onArchiveProject={onArchiveProject}
-              onDuplicateProject={onDuplicateProject}
-              onCreateGroup={onCreateGroup}
-              onAddToGroup={onAddToGroup}
-              onToggleVisibility={onToggleVisibility}
+              onStopProject={onStopProject}
+              onForkProject={onForkProject}
+              onShareLinkProject={onShareLinkProject}
               onExportProject={onExportProject}
             />
           </div>
@@ -756,9 +755,13 @@ export default function ChatScreen({
                           ? 'bg-gradient-to-r from-orange-500/20 to-red-500/20 border border-orange-500/30'
                           : 'bg-[#191919] border border-[#333]'
                       }`}>
-                        <div className="text-white text-xs leading-relaxed">
-                          {message.content}
-                        </div>
+                        {message.isUser ? (
+                          <div className="text-white text-xs leading-relaxed whitespace-pre-wrap break-words">
+                            {message.content}
+                          </div>
+                        ) : (
+                          <MarkdownMessage content={message.content} />
+                        )}
                         <div className="text-xs text-[#666] mt-0.5">
                           {message.timestamp.toLocaleTimeString()}
                         </div>
@@ -867,11 +870,9 @@ export default function ChatScreen({
           onCreateNew={onCreateNew}
           onRenameProject={onRenameProject}
           onDeleteProject={onDeleteProject}
-          onArchiveProject={onArchiveProject}
-          onDuplicateProject={onDuplicateProject}
-          onCreateGroup={onCreateGroup}
-          onAddToGroup={onAddToGroup}
-          onToggleVisibility={onToggleVisibility}
+          onStopProject={onStopProject}
+          onForkProject={onForkProject}
+          onShareLinkProject={onShareLinkProject}
           onExportProject={onExportProject}
         />
           </div>

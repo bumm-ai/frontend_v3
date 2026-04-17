@@ -16,10 +16,11 @@ interface ProjectGroupProps {
   onAddProject?: (groupName: string) => void;
   onRenameProject?: (project: Project, newName: string) => void;
   onDeleteProject?: (project: Project) => void;
-  onArchiveProject?: (project: Project) => void;
-  onDuplicateProject?: (project: Project) => void;
+  onStopProject?: (project: Project) => void;
+  onForkProject?: (project: Project) => void;
+  onShareLinkProject?: (project: Project) => void;
+  onExportProject?: (project: Project) => void;
   onRemoveFromGroup?: (project: Project) => void;
-  onToggleVisibility?: (project: Project) => void;
   onSelectProject?: (project: Project) => void;
   selectedProject?: Project | null;
 }
@@ -34,10 +35,11 @@ export const ProjectGroup = ({
   onAddProject,
   onRenameProject,
   onDeleteProject,
-  onArchiveProject,
-  onDuplicateProject,
+  onStopProject,
+  onForkProject,
+  onShareLinkProject,
+  onExportProject,
   onRemoveFromGroup,
-  onToggleVisibility,
   onSelectProject,
   selectedProject
 }: ProjectGroupProps) => {
@@ -171,9 +173,10 @@ export const ProjectGroup = ({
                       project={project}
                       onRename={onRenameProject}
                       onDelete={onDeleteProject}
-                      onArchive={onArchiveProject}
-                      onDuplicate={onDuplicateProject}
-                      onToggleVisibility={onToggleVisibility}
+                      onStop={onStopProject}
+                      onFork={onForkProject}
+                      onShareLink={onShareLinkProject}
+                      onExport={onExportProject}
                     />
                   </div>
                 </div>

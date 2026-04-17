@@ -27,6 +27,9 @@ export const ENDPOINTS = {
   CONTRACT_DELETE:          (uid: string) => `/api/v1/contracts/${uid}`,
   CONTRACT_DEPLOY_ESTIMATE: (uid: string) => `/api/v1/contracts/${uid}/deploy-estimate`,
   CONTRACT_FIXES:           (uid: string) => `/api/v1/contracts/${uid}/fixes`,
+  CONTRACT_CANCEL:          (uid: string) => `/api/v1/contracts/${uid}/cancel`,
+  CONTRACT_FORK:            (uid: string) => `/api/v1/contracts/${uid}/fork`,
+  CONTRACT_ROLLBACK:        (uid: string) => `/api/v1/contracts/${uid}/rollback`,
   // Step-mode endpoints — used by BuildModal / AuditModal / DeployModal
   CONTRACT_BUILD:        (uid: string) => `/api/v1/build/${uid}`,
   CONTRACT_AUDIT_STEP:   (uid: string) => `/api/v1/audit/${uid}`,

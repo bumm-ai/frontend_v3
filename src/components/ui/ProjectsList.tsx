@@ -11,11 +11,9 @@ interface ProjectsListProps {
   isLoading?: boolean;
   onRenameProject?: (project: Project, newName: string) => void;
   onDeleteProject?: (project: Project) => void;
-  onArchiveProject?: (project: Project) => void;
-  onDuplicateProject?: (project: Project) => void;
-  onCreateGroup?: (project: Project) => void;
-  onAddToGroup?: (project: Project) => void;
-  onToggleVisibility?: (project: Project) => void;
+  onStopProject?: (project: Project) => void;
+  onForkProject?: (project: Project) => void;
+  onShareLinkProject?: (project: Project) => void;
   onExportProject?: (project: Project) => void;
 }
 
@@ -26,11 +24,9 @@ export default function ProjectsList({
   isLoading = false,
   onRenameProject,
   onDeleteProject,
-  onArchiveProject,
-  onDuplicateProject,
-  onCreateGroup,
-  onAddToGroup,
-  onToggleVisibility,
+  onStopProject,
+  onForkProject,
+  onShareLinkProject,
   onExportProject
 }: ProjectsListProps) {
   const getStatusIcon = (status: string) => {
@@ -137,11 +133,9 @@ export default function ProjectsList({
                     project={project}
                     onRename={onRenameProject}
                     onDelete={onDeleteProject}
-                    onArchive={onArchiveProject}
-                    onDuplicate={onDuplicateProject}
-                    onCreateGroup={onCreateGroup}
-                    onAddToGroup={onAddToGroup}
-                    onToggleVisibility={onToggleVisibility}
+                    onStop={onStopProject}
+                    onFork={onForkProject}
+                    onShareLink={onShareLinkProject}
                     onExport={onExportProject}
                   />
                 </div>

@@ -9,6 +9,7 @@ import { useCredits } from '@/hooks/useCredits';
 import { useAuth } from '@/hooks/useAuth';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import { useContract, useMultiContract, deriveUIFromStatus } from '@/hooks/useContract';
+import { useStageReports } from '@/hooks/useStageReports';
 import { apiClient } from '@/services/api';
 import { tryRefresh } from '@/services/authService';
 import type { ChatMessagePayload } from '@/lib/api';
@@ -17,6 +18,7 @@ import type { ChatMessagePayload } from '@/lib/api';
 import LoginScreen from './LoginScreen';
 import ChatScreen from './ChatScreen';
 import { PasteCodeModal } from '@/components/ui/PasteCodeModal';
+import { RollbackModal } from '@/components/ui/RollbackModal';
 import type { Network } from '@/lib/api';
 
 /**
@@ -146,6 +148,7 @@ export default function Dashboard() {
   const [generationAttemptFailed, setGenerationAttemptFailed] = useState(0);
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
   const [pasteModalInitialCode, setPasteModalInitialCode] = useState<string | undefined>(undefined);
+  const [rollbackProject, setRollbackProject] = useState<Project | null>(null);
   // Generation animation is derived from backend status (phase + next_step),
   // not from a client-side session flag. See deriveAnimationStage.
 
@@ -404,8 +407,8 @@ export default function Dashboard() {
 
             addAIMessageForProject(
               uid,
-              `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}.\n\n` +
-              `🔧 **Auto-fixed ${fixes.length} compile error${fixes.length === 1 ? '' : 's'}**${sourceBreakdown}:\n\n` +
+              `**Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}.\n\n` +
+              `**Auto-fixed ${fixes.length} compile error${fixes.length === 1 ? '' : 's'}**${sourceBreakdown}:\n\n` +
               `${lines}` +
               `${fixes.length > 8 ? `\n\n_…and ${fixes.length - 8} more._` : ''}\n\n` +
               `Contract compiles cleanly. Click **Audit** to run security checks.`
@@ -414,12 +417,12 @@ export default function Dashboard() {
             addAIMessageForProject(
               uid,
               fixed > 0
-                ? `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Auto-fixed ${fixed} compile error${fixed > 1 ? 's' : ''}.\n\nContract compiles cleanly. Click **Audit** to run security checks.`
-                : `✅ **Build succeeded on the first attempt** — contract compiles cleanly with no errors.\n\nClick **Audit** to run security checks.`
+                ? `**Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Auto-fixed ${fixed} compile error${fixed > 1 ? 's' : ''}.\n\nContract compiles cleanly. Click **Audit** to run security checks.`
+                : `**Build succeeded on the first attempt** — contract compiles cleanly with no errors.\n\nClick **Audit** to run security checks.`
             );
           }
         } catch {
-          addAIMessageForProject(uid, `✅ **Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Click **Audit** to continue.`);
+          addAIMessageForProject(uid, `**Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Click **Audit** to continue.`);
         }
         // Refresh code (build may have patched the source)
         try {
@@ -464,22 +467,22 @@ export default function Dashboard() {
           if (vulns.length === 0) {
             addAIMessageForProject(
               uid,
-              `🛡️ **Audit passed on the first try** — no security issues found.\n\n` +
-              `📋 **Final state before deploy:**\n` +
-              `• Static analysis: clippy + cargo audit ✅\n` +
-              `• AI security review: ✅\n` +
-              `${buildFixCount > 0 ? `• Build fixes applied earlier: ${buildFixCount}\n` : ''}` +
+              `**Audit passed on the first try** — no security issues found.\n\n` +
+              `**Final state before deploy:**\n` +
+              `- Static analysis: clippy + cargo audit passed\n` +
+              `- AI security review: passed\n` +
+              `${buildFixCount > 0 ? `- Build fixes applied earlier: ${buildFixCount}\n` : ''}` +
               `\nContract is ready to deploy. Click **Publish** to deploy to Solana devnet.`
             );
           } else {
             // Group vulnerabilities by severity
             const SEV_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
             const SEV_LABELS: Record<string, string> = {
-              critical: '🔴 CRITICAL',
-              high:     '🟠 HIGH',
-              medium:   '🟡 MEDIUM',
-              low:      '🔵 LOW',
-              info:     '⚪ INFO',
+              critical: 'CRITICAL',
+              high:     'HIGH',
+              medium:   'MEDIUM',
+              low:      'LOW',
+              info:     'INFO',
             };
             const grouped: Record<string, Vuln[]> = {};
             for (const v of vulns) {
@@ -508,20 +511,20 @@ export default function Dashboard() {
 
             addAIMessageForProject(
               uid,
-              `🛡️ **Audit complete** after ${attempts} pass${attempts > 1 ? 'es' : ''} — ` +
+              `**Audit complete** after ${attempts} pass${attempts > 1 ? 'es' : ''} — ` +
               `found and patched **${vulns.length}** issue${vulns.length === 1 ? '' : 's'}.\n\n` +
-              `🔍 **Vulnerabilities found and fixed:**\n\n` +
+              `**Vulnerabilities found and fixed:**\n\n` +
               `${sections.join('\n\n')}\n\n` +
-              `📋 **Final state before deploy:**\n` +
-              `${buildFixCount > 0 ? `• Compile-time fixes: **${buildFixCount}**\n` : ''}` +
-              `• Security fixes: **${vulns.length}**\n` +
-              `• Static analysis: clippy + cargo audit ✅\n` +
-              `• AI security review: ✅\n\n` +
+              `**Final state before deploy:**\n` +
+              `${buildFixCount > 0 ? `- Compile-time fixes: **${buildFixCount}**\n` : ''}` +
+              `- Security fixes: **${vulns.length}**\n` +
+              `- Static analysis: clippy + cargo audit passed\n` +
+              `- AI security review: passed\n\n` +
               `Contract is ready to deploy. Click **Publish** to deploy to Solana devnet.`
             );
           }
         } catch {
-          addAIMessageForProject(uid, `🛡️ **Audit complete.** Contract is ready for deployment. Click **Publish** to deploy.`);
+          addAIMessageForProject(uid, `**Audit complete.** Contract is ready for deployment. Click **Publish** to deploy.`);
         }
         loadBalance().catch(() => {});
       })();
@@ -540,7 +543,7 @@ export default function Dashboard() {
         : p));
       addAIMessageForProject(
         uid,
-        `🚀 **Deployed to Solana!** Program ID: \`${pid}\`\n\nView on Explorer: https://explorer.solana.com/address/${pid}?cluster=devnet`
+        `**Deployed to Solana.** Program ID: \`${pid}\`\n\nView on Explorer: https://explorer.solana.com/address/${pid}?cluster=devnet`
       );
       setPipelineMsgId(null);
       setActiveContractUid(null);
@@ -552,11 +555,41 @@ export default function Dashboard() {
     // Guard: prev must be non-null — connecting to an already-failed project
     // (e.g. deploy ran out of funds earlier) must not re-add a failure message.
     if (prev && curr.phase === 'failed' && prev.phase !== 'failed' && activeContractUid) {
-      addAIMessageForProject(activeContractUid, `❌ **Pipeline failed:** ${curr.error ?? 'Unknown error'}`);
+      addAIMessageForProject(activeContractUid, `**Pipeline failed:** ${curr.error ?? 'Unknown error'}`);
+      setPipelineMsgId(null);
+    }
+
+    // [G] Auto-pause on degradation — backend detected fix loop / audit
+    // regression / syntax regression. Show reason and open the rollback modal.
+    if (
+      prev &&
+      curr.phase === 'paused_degraded' &&
+      prev.phase !== 'paused_degraded' &&
+      activeContractUid
+    ) {
+      const uid = activeContractUid;
+      const reason = curr.pause_report || 'Pipeline paused due to degradation signal.';
+      addAIMessageForProject(
+        uid,
+        `**Pipeline auto-paused.** ${reason}\n\nReview the code, or use the rollback dialog to restore a prior version.`,
+      );
+      const pausedProject = projects.find(p => p.uid === uid) ?? currentProject;
+      if (pausedProject) setRollbackProject(pausedProject);
       setPipelineMsgId(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contract.status]);
+
+  // ── Mid-pipeline stage reports (build-fail / fix-applied / audit-vulns) ──
+  // Terminal events (build_ok / audit_ok / deploy / failed) are handled in the
+  // effect above with richer API follow-up — this hook only fills the gaps.
+  useStageReports({
+    uid: activeContractUid,
+    status: contract.status,
+    onReport: (content) => {
+      if (activeContractUid) addAIMessageForProject(activeContractUid, content);
+    },
+  });
 
   // ── Helper: save project to backend + localStorage cache ─────────────────
   const saveProject = useCallback((project: Project) => {
@@ -1067,7 +1100,7 @@ export default function Dashboard() {
 
       const uid = currentProject?.bummUid ?? currentProject?.uid;
       if (!uid) {
-        addAIMessage('❌ No active project — create one first.');
+        addAIMessage('No active project — create one first.');
         return;
       }
 
@@ -1085,7 +1118,7 @@ export default function Dashboard() {
         if (step === 'deploy') await apiClient.triggerDeploy(uid);
       } catch (err) {
         setPendingStep(null); // restore button so user can retry
-        addAIMessage(`❌ Failed to start ${step}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        addAIMessage(`Failed to start ${step}: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
     },
     [currentProject],
@@ -1242,95 +1275,67 @@ export default function Dashboard() {
     }
   };
 
-  const handleArchiveProject = async (project: Project) => {
+  const handleStopProject = async (project: Project) => {
     try {
-      console.log(`${project.isFrozen ? 'Unarchiving' : 'Archiving'} project ${project.uid}`);
-      
-      // Update project archive status
-      const newArchivedStatus = !project.isFrozen;
-      updateProjects(prev => prev.map(p => 
-        p.uid === project.uid 
-          ? { ...p, isFrozen: newArchivedStatus, updated_at: new Date().toISOString() }
-          : p
-      ));
-      
-      // Update current project если это он
-      if (currentProject?.uid === project.uid) {
-        setCurrentProject(prev => prev ? { ...prev, isFrozen: newArchivedStatus } : null);
+      const res = await apiClient.cancelContract(project.uid);
+      if (res.cancelled) {
+        addAIMessage(`Pipeline stopped for "${project.name || 'Untitled'}" (was: ${res.phase_at_cancel}). Do you want to roll back the code?`);
+        setRollbackProject(project);
+      } else {
+        addAIMessage(`Nothing to stop — "${project.name || 'Untitled'}" is not running (phase: ${res.phase_at_cancel}).`);
       }
-      
-      addAIMessage(`Project "${project.name || 'Untitled'}" ${newArchivedStatus ? 'archived' : 'unarchived'}`);
     } catch (err) {
-      console.error('Failed to archive project:', err);
-      addAIMessage(`Failed to archive project: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      console.error('Failed to cancel project:', err);
+      addAIMessage(`Failed to stop project: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
-  const handleDuplicateProject = async (project: Project) => {
+  const handleForkProject = async (project: Project) => {
     try {
-      console.log(`Duplicating project ${project.uid}`);
-      
-      // Create project copy
-      const duplicatedProject = {
+      const res = await apiClient.forkContract(project.uid);
+      const forkProject: Project = {
         ...project,
-        uid: `project_${Date.now()}`,
-        name: `${project.name || 'Untitled'} (Copy)`,
+        uid: res.uid,
+        bummUid: res.uid,
+        name: res.name,
+        status: res.phase as Project['status'],
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-        isDeployed: false, // Copy cannot be deployed
+        isDeployed: false,
         isFrozen: false,
-        contract_address: null,
-        deployment_status: null
+        contractAddress: undefined,
       };
-      
-      // Add to beginning of list
-      updateProjects(prev => [duplicatedProject, ...prev]);
-      
-      addAIMessage(`Project "${project.name || 'Untitled'}" duplicated as "${duplicatedProject.name}"`);
+      updateProjects(prev => [forkProject, ...prev]);
+      addAIMessage(`Forked "${project.name || 'Untitled'}" → "${res.name}".`);
     } catch (err) {
-      console.error('Failed to duplicate project:', err);
-      addAIMessage(`Failed to duplicate project: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      console.error('Failed to fork project:', err);
+      addAIMessage(`Failed to fork project: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
-  const handleCreateGroup = async (project: Project) => {
-    try {
-      console.log(`Creating group for project ${project.uid}`);
-      // API call to create group will be implemented
-      addAIMessage(`Group created for project "${project.name || 'Untitled'}"`);
-    } catch (err) {
-      console.error('Failed to create group:', err);
-      addAIMessage(`Failed to create group: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    }
-  };
-
-  const handleAddToGroup = async (project: Project) => {
-    try {
-      console.log(`👥 Adding project ${project.uid} to group`);
-      // API call to add to group will be implemented
-      addAIMessage(`👥 Project "${project.name || 'Untitled'}" added to group`);
-    } catch (err) {
-      console.error('Failed to add to group:', err);
-      addAIMessage(`Failed to add to group: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    }
-  };
-
-  const handleToggleVisibility = async (project: Project) => {
-    try {
-      console.log(`${project.isFrozen ? 'Showing' : 'Hiding'} project ${project.uid}`);
-      // API call to toggle visibility will be implemented
-      addAIMessage(`Project "${project.name || 'Untitled'}" ${project.isFrozen ? 'shown' : 'hidden'}`);
-    } catch (err) {
-      console.error('Failed to toggle visibility:', err);
-      addAIMessage(`Failed to toggle visibility: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    }
+  const handleShareLinkProject = async (project: Project) => {
+    // UI stub — full share feature arrives with a dedicated backend endpoint.
+    addAIMessage(`Share link for "${project.name || 'Untitled'}" is coming soon.`);
   };
 
   const handleExportProject = async (project: Project) => {
     try {
-      console.log(`Exporting project ${project.uid}`);
-      // Export functionality will be implemented
-      addAIMessage(`Project "${project.name || 'Untitled'}" exported successfully!`);
+      const code = (project.code || '').trim();
+      if (!code) {
+        addAIMessage(`Cannot export "${project.name || 'Untitled'}" — contract has no code yet.`);
+        return;
+      }
+      const safeName = (project.name || 'contract').replace(/[^\w.-]+/g, '_').slice(0, 80) || 'contract';
+      const blob = new Blob([code], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safeName}.rs`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      addAIMessage(`Exported "${project.name || 'Untitled'}" as ${safeName}.rs`);
     } catch (err) {
       console.error('Failed to export project:', err);
       addAIMessage(`Failed to export project: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -1358,11 +1363,9 @@ export default function Dashboard() {
             onSelectProject={handleSelectProject}
             onRenameProject={handleRenameProject}
             onDeleteProject={handleDeleteProject}
-            onArchiveProject={handleArchiveProject}
-            onDuplicateProject={handleDuplicateProject}
-            onCreateGroup={handleCreateGroup}
-            onAddToGroup={handleAddToGroup}
-            onToggleVisibility={handleToggleVisibility}
+            onStopProject={handleStopProject}
+            onForkProject={handleForkProject}
+            onShareLinkProject={handleShareLinkProject}
             onExportProject={handleExportProject}
             isBuilding={isBuilding}
             currentProject={currentProject}
@@ -1391,6 +1394,22 @@ export default function Dashboard() {
       </AnimatePresence>
       {/* <WalletDebug /> */}
       {/* <SimpleWalletTest /> */}
+
+      {/* Rollback modal — appears after Stop to offer version restore */}
+      <RollbackModal
+        isOpen={rollbackProject !== null}
+        projectUid={rollbackProject?.uid ?? ''}
+        projectName={rollbackProject?.name ?? 'Untitled'}
+        onClose={() => setRollbackProject(null)}
+        onKeepCurrent={() => {
+          addAIMessage(`Keeping current code for "${rollbackProject?.name || 'Untitled'}".`);
+          setRollbackProject(null);
+        }}
+        onRolledBack={(version) => {
+          addAIMessage(`Code restored to version ${version} for "${rollbackProject?.name || 'Untitled'}". Pipeline is paused before build — trigger build when ready.`);
+          setRollbackProject(null);
+        }}
+      />
 
       {/* Paste-code modal — lives at Dashboard level so it persists across chat renders */}
       <PasteCodeModal

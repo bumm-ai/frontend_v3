@@ -163,6 +163,35 @@ export class ApiClient {
     return apiFetch(ENDPOINTS.CONTRACT_DELETE(uid), { method: 'DELETE' });
   }
 
+  async cancelContract(uid: string): Promise<{
+    uid: string;
+    cancelled: boolean;
+    phase_at_cancel: string;
+    note: string;
+  }> {
+    return apiFetch(ENDPOINTS.CONTRACT_CANCEL(uid), { method: 'POST' });
+  }
+
+  async rollbackContract(uid: string, version: number): Promise<{
+    uid: string;
+    version: number;
+    code_length: number;
+  }> {
+    return apiFetch(ENDPOINTS.CONTRACT_ROLLBACK(uid), {
+      method: 'POST',
+      body: JSON.stringify({ version }),
+    });
+  }
+
+  async forkContract(uid: string): Promise<{
+    uid: string;
+    source_uid: string;
+    name: string;
+    phase: string;
+  }> {
+    return apiFetch(ENDPOINTS.CONTRACT_FORK(uid), { method: 'POST' });
+  }
+
   async getContractChat(uid: string): Promise<{ messages: Array<Record<string, unknown>> }> {
     return apiFetch(ENDPOINTS.CONTRACT_CHAT(uid));
   }

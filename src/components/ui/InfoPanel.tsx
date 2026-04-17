@@ -24,11 +24,9 @@ interface InfoPanelProps {
   onCreateNew?: () => void;
   onRenameProject?: (project: Project, newName: string) => void;
   onDeleteProject?: (project: Project) => void;
-  onArchiveProject?: (project: Project) => void;
-  onDuplicateProject?: (project: Project) => void;
-  onCreateGroup?: (project: Project) => void;
-  onAddToGroup?: (project: Project) => void;
-  onToggleVisibility?: (project: Project) => void;
+  onStopProject?: (project: Project) => void;
+  onForkProject?: (project: Project) => void;
+  onShareLinkProject?: (project: Project) => void;
   onExportProject?: (project: Project) => void;
 }
 
@@ -40,11 +38,9 @@ export const InfoPanel = ({
   onCreateNew,
   onRenameProject,
   onDeleteProject,
-  onArchiveProject,
-  onDuplicateProject,
-  onCreateGroup,
-  onAddToGroup,
-  onToggleVisibility,
+  onStopProject,
+  onForkProject,
+  onShareLinkProject,
   onExportProject
 }: InfoPanelProps) => {
   const [currentNetwork, setCurrentNetwork] = useState<'devnet' | 'mainnet'>('devnet');
@@ -114,11 +110,9 @@ export const InfoPanel = ({
           isLoading={isLoading}
           onRenameProject={onRenameProject}
           onDeleteProject={onDeleteProject}
-          onArchiveProject={onArchiveProject}
-          onDuplicateProject={onDuplicateProject}
-          onCreateGroup={onCreateGroup}
-          onAddToGroup={onAddToGroup}
-          onToggleVisibility={onToggleVisibility}
+          onStopProject={onStopProject}
+          onForkProject={onForkProject}
+          onShareLinkProject={onShareLinkProject}
           onExportProject={onExportProject}
         />
       </div>
