@@ -2,17 +2,50 @@
 
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { useState, useEffect } from 'react';
-import { Wallet, Copy, ExternalLink, ChevronDown, RefreshCw } from 'lucide-react';
+import { Wallet, Copy, ExternalLink, ChevronDown, RefreshCw, LogOut } from 'lucide-react';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { WalletModal } from './WalletModal';
+import { useAuth } from '@/hooks/useAuth';
 
 export const HeaderWalletButton = () => {
-  const { connected, connecting, publicKey, disconnect, wallet } = useWallet();
+  const { connected, connecting, publicKey, wallet } = useWallet();
   const { connection } = useConnection();
+  const { logout } = useAuth();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [balance, setBalance] = useState<number | null>(null);
   const [balanceLoading, setBalanceLoading] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+
+  /**
+   * Full sign-out: revokes refresh token on backend, clears tokens AND
+   * the per-wallet/per-contract `bumm_*` localStorage cache (handled in
+   * authService.logout), disconnects the wallet adapter, then triggers
+   * a hard page navigation so every WS, polling interval, hook, and
+   * cached state instance is torn down.
+   *
+   * Why a hard navigation (`window.location.replace`) instead of
+   * `router.replace`/`router.refresh`: the dashboard is rendered at `/`
+   * itself, so a soft client-side nav doesn't actually unmount the tree
+   * — it just rerenders. That left things like `useContract`'s WS, the
+   * REST poller in `useMultiContract`, and per-project intervals alive,
+   * which kept hammering the backend with stale tokens (visible in
+   * server logs as a flood of 401s right after sign-out).
+   *
+   * `window.location.replace('/')` discards all in-memory state and
+   * brings the user to a clean LoginScreen — the landing/login surface.
+   */
+  const handleSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await logout();
+    } catch { /* best-effort — proceed with hard nav anyway */ }
+    setShowDropdown(false);
+    if (typeof window !== 'undefined') {
+      window.location.replace('/');
+    }
+  };
 
   const fetchBalance = async () => {
     if (!publicKey) return;
@@ -181,13 +214,21 @@ export const HeaderWalletButton = () => {
                     </button>
                     
                     <button
-                      onClick={() => {
-                        disconnect();
-                        setShowDropdown(false);
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-[#333] rounded transition-colors"
+                      onClick={handleSignOut}
+                      disabled={signingOut}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-[#333] rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Disconnect
+                      {signingOut ? (
+                        <>
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          Signing out…
+                        </>
+                      ) : (
+                        <>
+                          <LogOut className="w-3 h-3" />
+                          Sign out
+                        </>
+                      )}
                     </button>
                   </div>
                 </div>

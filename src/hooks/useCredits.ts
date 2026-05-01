@@ -1,11 +1,18 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { apiClient, getAccessToken } from '@/services/api';
 import type { BalanceResponse, PurchaseResponse, CreditRatesResponse, CreditsStreamEvent } from '@/lib/api';
 import { wsHub } from '@/services/wsHub';
 import { balanceBus } from '@/services/balanceBus';
+
+// Minimum ms between balance HTTP fetches. WS balance_published events bypass
+// this guard so realtime updates are never delayed. The 429 storm in prod logs
+// (incident 2026-04-18) showed 30+ calls/min when 3 projects polled simultaneously.
+const BALANCE_THROTTLE_MS = 15_000;
+// Rates rarely change — refresh at most once per session page load (1 hour).
+const RATES_THROTTLE_MS = 3_600_000;
 
 // Default rates: 0.1 SOL = 2000 credits → 1 SOL = 20,000 credits
 const DEFAULT_CREDITS_PER_SOL = 20_000;
@@ -20,8 +27,16 @@ export function useCredits() {
   const [creditsPerSol, setCreditsPerSol] = useState(DEFAULT_CREDITS_PER_SOL);
   const [chatCreditCost, setChatCreditCost] = useState(1);
 
-  // ── fetch balance ─────────────────────────────────────────────────────────────
-  const refetch = useCallback(async (): Promise<void> => {
+  const lastBalanceFetchRef = useRef<number>(0);
+  const lastRatesFetchRef   = useRef<number>(0);
+
+  // ── fetch balance (throttled) ─────────────────────────────────────────────────
+  // `force=true` bypasses throttle — used when WS sends balance_published so the
+  // UI stays in sync without hitting the rate-limit.
+  const refetch = useCallback(async (force = false): Promise<void> => {
+    const now = Date.now();
+    if (!force && now - lastBalanceFetchRef.current < BALANCE_THROTTLE_MS) return;
+    lastBalanceFetchRef.current = now;
     setIsLoading(true);
     setError(null);
     try {
@@ -35,8 +50,11 @@ export function useCredits() {
     }
   }, []);
 
-  // ── fetch rates from backend ──────────────────────────────────────────────────
+  // ── fetch rates (throttled — rates rarely change) ─────────────────────────────
   const loadRates = useCallback(async (): Promise<void> => {
+    const now = Date.now();
+    if (now - lastRatesFetchRef.current < RATES_THROTTLE_MS) return;
+    lastRatesFetchRef.current = now;
     try {
       const rates = await apiClient.getCreditRates();
       setCreditsPerSol(rates.credits_per_sol);
@@ -81,7 +99,9 @@ export function useCredits() {
       (raw) => {
         const event = raw as CreditsStreamEvent;
         if (typeof event.balance === 'number') {
+          // Backend pushed exact balance — use it directly (bypass throttle).
           setBalance(event.balance);
+          lastBalanceFetchRef.current = Date.now();
         }
       },
       () => getAccessToken() ?? '',

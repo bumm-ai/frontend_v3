@@ -1563,67 +1563,82 @@ export default function InteractiveDemo() {
   };
 
   const handleBuildComplete = () => {
+    const successMessage: ChatMessage = {
+      id: generateUniqueId(),
+      type: 'system',
+      content: 'Smart contract built successfully! Ready for audit and deployment.',
+      timestamp: new Date(),
+    };
     setDemoState(prev => ({
       ...prev,
       isBuilding: false,
-      currentProject: prev.currentProject ? { ...prev.currentProject, status: 'built' } : null
+      currentProject: prev.currentProject ? { ...prev.currentProject, status: 'built' } : null,
+      projects: prev.projects.map(p =>
+        p.id === prev.currentProject?.id ? { ...p, status: 'built' } : p
+      ),
+      messages: [...prev.messages, successMessage],
     }));
-    
-    // Update project in list
-    if (demoState.currentProject) {
-      setDemoState(prev => ({
-        ...prev,
-        projects: prev.projects.map(p => 
-          p.id === prev.currentProject?.id 
-            ? { ...p, status: 'built' }
-            : p
-        )
-      }));
-    }
-    
   };
 
   const handleAuditComplete = () => {
+    const successMessage: ChatMessage = {
+      id: generateUniqueId(),
+      type: 'system',
+      content: 'Security audit completed successfully! Contract is ready for deployment.',
+      timestamp: new Date(),
+    };
     setDemoState(prev => ({
       ...prev,
       isAuditing: false,
-      currentProject: prev.currentProject ? { ...prev.currentProject, status: 'audited' } : null
+      currentProject: prev.currentProject ? { ...prev.currentProject, status: 'audited' } : null,
+      projects: prev.projects.map(p =>
+        p.id === prev.currentProject?.id ? { ...p, status: 'audited' } : p
+      ),
+      messages: [...prev.messages, successMessage],
     }));
-    
-    // Update project in list
-    if (demoState.currentProject) {
-      setDemoState(prev => ({
-        ...prev,
-        projects: prev.projects.map(p => 
-          p.id === prev.currentProject?.id 
-            ? { ...p, status: 'audited' }
-            : p
-        )
-      }));
-    }
-    
   };
 
   const handleDeployComplete = () => {
+    const successMessage: ChatMessage = {
+      id: generateUniqueId(),
+      type: 'system',
+      content: 'Contract deployed successfully! Your smart contract is now live on Solana.',
+      timestamp: new Date(),
+    };
+    setOriginalDeployedCode(contractCode);
     setDemoState(prev => ({
       ...prev,
       isDeploying: false,
-      currentProject: prev.currentProject ? { ...prev.currentProject, status: 'deployed' } : null
+      currentProject: prev.currentProject ? { ...prev.currentProject, status: 'deployed' } : null,
+      projects: prev.projects.map(p =>
+        p.id === prev.currentProject?.id ? { ...p, status: 'deployed' } : p
+      ),
+      messages: [...prev.messages, successMessage],
     }));
-    
-    // Update project in list
-    if (demoState.currentProject) {
-      setDemoState(prev => ({
-        ...prev,
-        projects: prev.projects.map(p => 
-          p.id === prev.currentProject?.id 
-            ? { ...p, status: 'deployed' }
-            : p
-        )
-      }));
-    }
-    
   };
+
+  // Demo-only auto-advance: real stages are backend-driven via ContractStatus,
+  // but the demo has no backend, so fire completion on a timer.
+  useEffect(() => {
+    if (!demoState.isBuilding) return;
+    const t = setTimeout(handleBuildComplete, 4000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoState.isBuilding]);
+
+  useEffect(() => {
+    if (!demoState.isAuditing) return;
+    const t = setTimeout(handleAuditComplete, 4000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoState.isAuditing]);
+
+  useEffect(() => {
+    if (!demoState.isDeploying) return;
+    const t = setTimeout(handleDeployComplete, 4000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demoState.isDeploying]);
 
   return (
     <div 
@@ -1860,132 +1875,15 @@ export default function InteractiveDemo() {
             
             {/* Animations replace InteractiveCodeEditor */}
             {demoState.isBuilding && (
-              <BuildStages 
-                  isBuilding={demoState.isBuilding}
-                  onComplete={() => {
-                    setDemoState(prev => ({ 
-                        ...prev, 
-                        isBuilding: false,
-                        currentProject: prev.currentProject ? { ...prev.currentProject, status: 'built' } : null,
-                        projects: prev.projects.map(project => 
-                          project.id === prev.currentProject?.id 
-                            ? { ...project, status: 'built' }
-                            : project
-                        )
-                      }));
-                      
-                      // Add final success message
-                      const successMessage: ChatMessage = {
-                        id: generateUniqueId(),
-                        type: 'system',
-                        content: 'Smart contract built successfully! Ready for audit and deployment.',
-                        timestamp: new Date()
-                      };
-                      setDemoState(prev => ({
-                        ...prev,
-                        messages: [...prev.messages, successMessage]
-                      }));
-                    }}
-                    onAddAIMessage={(message) => {
-                      const aiMessage: ChatMessage = {
-                        id: generateUniqueId(),
-                        type: 'ai',
-                        content: message,
-                        timestamp: new Date()
-                      };
-                      setDemoState(prev => ({
-                        ...prev,
-                        messages: [...prev.messages, aiMessage]
-                      }));
-                    }}
-                  />
+              <BuildStages isBuilding={demoState.isBuilding} status={null} />
             )}
-            
+
             {demoState.isAuditing && (
-              <AuditStages 
-                  isAuditing={demoState.isAuditing}
-                  onComplete={() => {
-                    setDemoState(prev => ({ 
-                        ...prev, 
-                        isAuditing: false,
-                        currentProject: prev.currentProject ? { ...prev.currentProject, status: 'audited' } : null,
-                        projects: prev.projects.map(project => 
-                          project.id === prev.currentProject?.id 
-                            ? { ...project, status: 'audited' }
-                            : project
-                        )
-                      }));
-                      
-                      // Add final success message
-                      const successMessage: ChatMessage = {
-                        id: generateUniqueId(),
-                        type: 'system',
-                        content: 'Security audit completed successfully! Contract is ready for deployment.',
-                        timestamp: new Date()
-                      };
-                      setDemoState(prev => ({
-                        ...prev,
-                        messages: [...prev.messages, successMessage]
-                      }));
-                    }}
-                    onAddAIMessage={(message) => {
-                      const aiMessage: ChatMessage = {
-                        id: generateUniqueId(),
-                        type: 'ai',
-                        content: message,
-                        timestamp: new Date()
-                      };
-                      setDemoState(prev => ({
-                        ...prev,
-                        messages: [...prev.messages, aiMessage]
-                      }));
-                    }}
-                  />
+              <AuditStages isAuditing={demoState.isAuditing} status={null} />
             )}
-            
+
             {demoState.isDeploying && (
-              <DeployStages 
-                  isDeploying={demoState.isDeploying}
-                  onComplete={() => {
-                    setDemoState(prev => ({ 
-                        ...prev, 
-                        isDeploying: false,
-                        currentProject: prev.currentProject ? { ...prev.currentProject, status: 'deployed' } : null,
-                        projects: prev.projects.map(project => 
-                          project.id === prev.currentProject?.id 
-                            ? { ...project, status: 'deployed' }
-                            : project
-                        )
-                      }));
-                      
-                      // Update original code after successful deploy/upgrade
-                      setOriginalDeployedCode(contractCode);
-                      
-                      // Add final success message
-                      const successMessage: ChatMessage = {
-                        id: generateUniqueId(),
-                        type: 'system',
-                        content: 'Contract deployed successfully! Your smart contract is now live on Solana.',
-                        timestamp: new Date()
-                      };
-                      setDemoState(prev => ({
-                        ...prev,
-                        messages: [...prev.messages, successMessage]
-                      }));
-                    }}
-                    onAddAIMessage={(message) => {
-                      const aiMessage: ChatMessage = {
-                        id: generateUniqueId(),
-                        type: 'ai',
-                        content: message,
-                        timestamp: new Date()
-                      };
-                      setDemoState(prev => ({
-                        ...prev,
-                        messages: [...prev.messages, aiMessage]
-                      }));
-                    }}
-                  />
+              <DeployStages isDeploying={demoState.isDeploying} status={null} />
             )}
             
             {/* InteractiveCodeEditor - shown only when no animations */}
@@ -2409,23 +2307,11 @@ export default function InteractiveDemo() {
                 isGenerating={demoState.isGenerating}
               />
             ) : demoState.isBuilding ? (
-              <BuildStages 
-                onComplete={handleBuildComplete}
-                onAddAIMessage={() => {}}
-                isBuilding={demoState.isBuilding}
-              />
+              <BuildStages isBuilding={demoState.isBuilding} status={null} />
             ) : demoState.isAuditing ? (
-              <AuditStages 
-                onComplete={handleAuditComplete}
-                onAddAIMessage={() => {}}
-                isAuditing={demoState.isAuditing}
-              />
+              <AuditStages isAuditing={demoState.isAuditing} status={null} />
             ) : demoState.isDeploying ? (
-              <DeployStages 
-                onComplete={handleDeployComplete}
-                onAddAIMessage={() => {}}
-                isDeploying={demoState.isDeploying}
-              />
+              <DeployStages isDeploying={demoState.isDeploying} status={null} />
             ) : (
               <InteractiveCodeEditor
                 key={`editor-mobile-${demoInstanceKey}`}

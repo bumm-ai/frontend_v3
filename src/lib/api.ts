@@ -78,6 +78,11 @@ export interface ContractStatus {
   last_fix_description?: string | null;
   last_fix_source?: string | null;
   pause_report?: string | null;
+  // Migration 0010: contract was deployed BEFORE the find_so fix and ended up
+  // re-uploading the warm-seed Hello-World binary on a shared address.
+  // Frontend shows a redeploy banner when this is true.
+  requires_redeploy?: boolean;
+  stale_program_id?: string | null;
 }
 
 export interface ContractCode {

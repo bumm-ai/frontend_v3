@@ -1,224 +1,248 @@
 'use client';
 
-import { motion, AnimatePresence } from 'framer-motion';
-import { Shield, Search, FileText, Bug, CheckCircle, AlertTriangle, Zap } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
-import { DancingDotsLoader } from './DancingDotsLoader';
+import {
+  Shield,
+  Search,
+  Zap,
+  CheckCircle,
+  Hourglass,
+  RefreshCw,
+  ScanLine,
+  Brain,
+  FileSearch,
+} from 'lucide-react';
+import type { ContractStatus } from '@/lib/api';
+import {
+  PipelineStagesCard,
+  type StageView,
+} from './PipelineStagesCard';
+import { usePhaseTimer, pickSubStepIndex } from '@/hooks/usePhaseTimer';
 
-interface AuditStage {
-  id: string;
-  title: string;
-  description: string;
-  icon: React.ComponentType<{ className?: string }>;
-  duration: number;
+interface DerivedAuditStages {
+  stages: StageView[];
+  currentId: string | null;
+  completedIds: string[];
+  footer: string;
 }
 
-const auditStages: AuditStage[] = [
-  {
-    id: 'data-flow',
-    title: 'Data and Control Flow Analysis',
-    description: 'Analyzing data flow and control structures',
-    icon: Search,
-    duration: 2000
-  },
-  {
+function formatVulnSummary(vulns: Record<string, number>): string {
+  const order = ['critical', 'high', 'medium', 'low', 'info'];
+  return order
+    .filter((k) => (vulns[k] ?? 0) > 0)
+    .map((k) => `${vulns[k]} ${k}`)
+    .join(', ');
+}
+
+/**
+ * Map backend status → audit-stage view model.
+ *
+ * Backend sets `state.phase = AUDITING_STATIC` only when the static
+ * analysis node returns, and `AUDITING_LLM` only when the LLM node
+ * returns — so during the actual work the checkpoint reports the
+ * previous phase. We drive cosmetic sub-steps off `elapsedSeconds`
+ * since the audit card mounted; backend phase is used for major
+ * transitions (`audit_fixing`, `audit_ok`).
+ *
+ * Cosmetic timeline (calibrated on warm builder):
+ *   0–4s    → Preparing audit
+ *   4–50s   → Running clippy lints
+ *   50–80s  → Running cargo audit (CVE scan)
+ *   80–95s  → Submitting code to AI
+ *   95–115s → AI reasoning over code
+ *   115s+   → Generating findings report
+ */
+export function deriveAuditStages(
+  status: ContractStatus | null,
+  elapsedSeconds: number = 0,
+): DerivedAuditStages {
+  const phase = status?.phase ?? null;
+  const auditOk = status?.audit_ok ?? false;
+  const attempt = status?.audit_attempt ?? 0;
+  const vulns = status?.vulns_by_severity ?? {};
+  const lastFix = status?.last_fix_description ?? null;
+  const lastFixSource = status?.last_fix_source ?? null;
+  const fixesCount = status?.fixes_applied_count ?? 0;
+
+  const vulnSummary = formatVulnSummary(vulns);
+  const vulnTotal = Object.values(vulns).reduce(
+    (a, b) => a + (b ?? 0),
+    0,
+  );
+
+  let fixBadge: string | undefined;
+  if (lastFixSource === 'knowledge_base') fixBadge = 'KB';
+  else if (lastFixSource === 'llm_generated') fixBadge = 'AI';
+
+  const preparing: StageView = {
     id: 'preparing',
-    title: 'Preparing for Analysis',
-    description: 'Setting up security analysis environment',
-    icon: Shield,
-    duration: 1800
-  },
-  {
-    id: 'static-analysis',
-    title: 'Static Code Analysis (SAST)',
-    description: 'Performing static security analysis',
-    icon: FileText,
-    duration: 2400
-  },
-  {
-    id: 'data-control',
-    title: 'Data and Control Flow Analysis',
-    description: 'Analyzing data flow and control structures',
+    title: 'Preparing audit',
+    subtitle: 'Loading compiled binary and security rule set',
+    icon: Hourglass,
+  };
+
+  const clippy: StageView = {
+    id: 'clippy',
+    title: 'Running clippy lints',
+    subtitle: 'Detecting Rust anti-patterns and best-practice violations',
+    icon: ScanLine,
+  };
+
+  const cargoAudit: StageView = {
+    id: 'cargo-audit',
+    title: 'Running cargo audit (CVE scan)',
+    subtitle: 'Cross-checking dependencies against the RustSec advisory DB',
     icon: Search,
-    duration: 2200
-  },
-  {
-    id: 'exploit-simulation',
-    title: 'Economic Exploit Simulation',
-    description: 'Simulating potential economic exploits',
-    icon: Bug,
-    duration: 2000
-  },
-  {
-    id: 'security-report',
-    title: 'Generating Security Report',
-    description: 'Creating comprehensive security report',
-    icon: AlertTriangle,
-    duration: 1800
-  },
-  {
-    id: 'remediation',
-    title: 'Finalizing Remediation',
-    description: 'Applying security fixes and recommendations',
+  };
+
+  const llmSubmitting: StageView = {
+    id: 'llm-submitting',
+    title: 'Submitting to AI reviewer',
+    subtitle: 'Packaging code and intent into the security review prompt',
+    icon: Brain,
+  };
+
+  const llmReasoning: StageView = {
+    id: 'llm-reasoning',
+    title: 'AI reasoning over code',
+    subtitle: vulnSummary
+      ? `Detected so far: ${vulnSummary}`
+      : 'Inspecting account validation, math, and authority checks',
+    icon: Shield,
+  };
+
+  const llmReporting: StageView = {
+    id: 'llm-reporting',
+    title: 'Generating findings report',
+    subtitle: 'Ranking vulnerabilities by severity and writing remediation hints',
+    icon: FileSearch,
+  };
+
+  const patching: StageView = {
+    id: 'patching',
+    title:
+      vulnTotal > 0
+        ? `Patching vulnerabilities — ${vulnTotal} found`
+        : 'Patching vulnerabilities',
+    subtitle: lastFix
+      ? `Latest fix: ${lastFix}`
+      : 'Applying suggested remediations',
     icon: Zap,
-    duration: 1600
+    badge: fixBadge,
+  };
+
+  const reaudit: StageView = {
+    id: 'reaudit',
+    title: `Re-auditing — pass ${attempt}`,
+    subtitle: 'Verifying fixes did not introduce new findings',
+    icon: RefreshCw,
+  };
+
+  const passes: StageView = {
+    id: 'audit-passes',
+    title: 'Audit passes',
+    subtitle: 'No unresolved security issues',
+    icon: CheckCircle,
+  };
+
+  const showPatching = phase === 'audit_fixing' || vulnTotal > 0 || fixesCount > 0;
+  const showReaudit =
+    fixesCount > 0 && (phase === 'auditing_static' || phase === 'auditing_llm' || auditOk);
+  const isFirstAudit = attempt <= 1 && fixesCount === 0;
+
+  // Sub-step ids in cosmetic order (preparing → static tools → LLM stages).
+  const auditSubSteps = [
+    'preparing',
+    'clippy',
+    'cargo-audit',
+    'llm-submitting',
+    'llm-reasoning',
+    'llm-reporting',
+  ] as const;
+
+  const stages: StageView[] = [];
+  if (isFirstAudit || auditOk) {
+    stages.push(preparing, clippy, cargoAudit, llmSubmitting, llmReasoning, llmReporting);
+  } else {
+    stages.push(preparing, clippy, cargoAudit, llmReasoning);
   }
-];
+  if (showPatching) stages.push(patching);
+  if (showReaudit) stages.push(reaudit);
+  stages.push(passes);
+
+  let currentId: string | null;
+  const completedIds: string[] = [];
+
+  if (auditOk) {
+    for (const s of stages) if (s.id !== 'audit-passes') completedIds.push(s.id);
+    currentId = 'audit-passes';
+  } else if (phase === 'audit_fixing') {
+    for (const id of auditSubSteps) completedIds.push(id);
+    currentId = 'patching';
+  } else if (attempt > 1 && showReaudit) {
+    for (const id of auditSubSteps) completedIds.push(id);
+    if (showPatching && fixesCount > 0) completedIds.push('patching');
+    currentId = 'reaudit';
+  } else if (isFirstAudit) {
+    // ── Mount-elapsed-driven progression through cosmetic audit sub-steps.
+    //   0–4s    → preparing
+    //   4–50s   → clippy
+    //   50–80s  → cargo-audit
+    //   80–95s  → llm-submitting
+    //   95–115s → llm-reasoning
+    //   115s+   → llm-reporting
+    const idx = Math.min(
+      auditSubSteps.length - 1,
+      pickSubStepIndex(elapsedSeconds, [4, 50, 80, 95, 115]),
+    );
+    for (let i = 0; i < idx; i++) completedIds.push(auditSubSteps[i]);
+    currentId = auditSubSteps[idx];
+  } else {
+    completedIds.push('preparing', 'clippy', 'cargo-audit');
+    currentId = 'llm-reasoning';
+  }
+
+  let footer: string;
+  if (auditOk) footer = 'Audit complete';
+  else if (phase === 'audit_fixing')
+    footer = `Patching vulnerabilities (pass ${attempt || 1})…`;
+  else if (isFirstAudit) {
+    if (elapsedSeconds > 115) footer = 'Generating findings report…';
+    else if (elapsedSeconds > 95) footer = 'AI reasoning over code…';
+    else if (elapsedSeconds > 80) footer = 'Submitting code to AI reviewer…';
+    else if (elapsedSeconds > 50) footer = 'Cross-checking CVEs (cargo audit)…';
+    else if (elapsedSeconds > 4) footer = 'Running clippy lints…';
+    else footer = 'Preparing audit…';
+  } else footer = 'Auditing…';
+
+  return { stages, currentId, completedIds, footer };
+}
 
 interface AuditStagesProps {
   isAuditing: boolean;
-  onComplete: () => void;
-  onAddAIMessage: (message: string) => void;
+  status: ContractStatus | null;
 }
 
-export const AuditStages = ({ isAuditing, onComplete, onAddAIMessage }: AuditStagesProps) => {
-  const [currentStageIndex, setCurrentStageIndex] = useState(0);
-  const [completedStages, setCompletedStages] = useState<string[]>([]);
-  const startedRef = useRef(false);
-  const onCompleteRef = useRef(onComplete);
-  onCompleteRef.current = onComplete;
-
-  useEffect(() => {
-    if (isAuditing) {
-      startedRef.current = true;
-      return;
-    }
-    if (!startedRef.current) return;
-    startedRef.current = false;
-    setCompletedStages(auditStages.map(s => s.id));
-    onCompleteRef.current();
-  }, [isAuditing]);
-
-  useEffect(() => {
-    if (!isAuditing) {
-      setCurrentStageIndex(0);
-      setCompletedStages([]);
-      return;
-    }
-
-    if (currentStageIndex >= auditStages.length - 1) return;
-
-    const currentStage = auditStages[currentStageIndex];
-    const timeoutId = setTimeout(() => {
-      setCompletedStages(prev => [...prev, currentStage.id]);
-      setCurrentStageIndex(prev => prev + 1);
-    }, currentStage.duration);
-
-    return () => clearTimeout(timeoutId);
-  }, [isAuditing, currentStageIndex]);
-
+export const AuditStages = ({ isAuditing, status }: AuditStagesProps) => {
+  const timerKey = status?.bumm_uid
+    ? `audit:${status.bumm_uid}`
+    : 'audit:demo';
+  const { phaseElapsedSeconds: elapsedSeconds } = usePhaseTimer(
+    isAuditing ? 'audit-active' : null,
+    timerKey,
+  );
   if (!isAuditing) return null;
-
-  const currentStage = auditStages[currentStageIndex];
-
+  const { stages, currentId, completedIds, footer } = deriveAuditStages(
+    status,
+    elapsedSeconds,
+  );
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
-      className="flex gap-3 h-full"
-    >
-      <div className="w-8 h-8 rounded-full bg-[#191919] flex items-center justify-center">
-        <motion.div
-          key={currentStage?.id}
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          className="text-blue-600/90"
-        >
-          {currentStage && <currentStage.icon className="w-4 h-4" />}
-        </motion.div>
-      </div>
-      
-      <div className="flex-1 flex flex-col">
-        <div className="border border-dashed border-blue-600/60 rounded-lg p-6 bg-[#191919] flex-1 flex flex-col overflow-y-auto">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-4">
-            <div className="text-white font-medium text-sm">
-              Audit Smart Contract
-            </div>
-            <DancingDotsLoader />
-          </div>
-
-          {/* Current Stage */}
-          <AnimatePresence mode="wait">
-            {currentStage && (
-              <motion.div
-                key={currentStage.id}
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.3, ease: "easeInOut" }}
-                className="mb-6"
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <currentStage.icon className="w-4 h-4 text-blue-600/90" />
-                  <div className="text-blue-500/90 font-medium text-sm">
-                    {currentStage.title}
-                  </div>
-                </div>
-                <div className="text-gray-400 text-xs">
-                  {currentStage.description}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Progress Stages */}
-          <div className="space-y-2 flex-1">
-            {auditStages.map((stage, index) => {
-              const isCompleted = completedStages.includes(stage.id);
-              const isCurrent = currentStageIndex === index;
-
-              return (
-                <motion.div
-                  key={stage.id}
-                  className="flex items-center gap-3"
-                  initial={{ opacity: 0.3 }}
-                  animate={{ 
-                    opacity: isCompleted ? 1 : isCurrent ? 0.8 : 0.3,
-                    scale: isCurrent ? 1.02 : 1
-                  }}
-                  transition={{ duration: 0.4, ease: "easeInOut" }}
-                >
-                  <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
-                    isCompleted 
-                      ? 'bg-green-600/80' 
-                      : isCurrent 
-                        ? 'bg-blue-600/80' 
-                        : 'bg-gray-600'
-                  }`}>
-                    {isCompleted ? (
-                      <CheckCircle className="w-3 h-3 text-white" />
-                    ) : isCurrent ? (
-                      <motion.div
-                        className="w-2 h-2 bg-white rounded-full"
-                        animate={{ scale: [1, 1.2, 1] }}
-                        transition={{ duration: 1, repeat: Infinity }}
-                      />
-                    ) : (
-                      <div className="w-2 h-2 bg-gray-400 rounded-full" />
-                    )}
-                  </div>
-                  
-                  <div className={`text-xs ${
-                    isCompleted 
-                      ? 'text-green-500/90' 
-                      : isCurrent 
-                        ? 'text-blue-500/90' 
-                        : 'text-gray-500'
-                  }`}>
-                    {stage.title}
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        </div>
-        
-        <div className="text-xs text-[#666] mt-1 flex-shrink-0">
-          Security analysis in progress...
-        </div>
-      </div>
-    </motion.div>
+    <PipelineStagesCard
+      headerLabel="Audit Smart Contract"
+      stages={stages}
+      currentId={currentId}
+      completedIds={completedIds}
+      footer={footer}
+      timerKey={timerKey}
+    />
   );
 };

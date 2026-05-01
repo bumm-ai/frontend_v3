@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { ContractStatus } from '@/lib/api';
+import { humanizeErrorCodes } from '@/lib/errorTranslate';
 
 /**
  * Deterministic mid-pipeline stage-report generator.
@@ -61,7 +62,8 @@ export function useStageReports({ uid, status, onReport }: UseStageReportsParams
       const attempt = status.build_attempt;
       const count = status.build_errors_count ?? 0;
       const codes = (status.top_error_codes ?? []).filter(Boolean);
-      const codesStr = codes.length > 0 ? ` (${codes.join(', ')})` : '';
+      const human = humanizeErrorCodes(codes);
+      const codesStr = human ? ` (${human})` : '';
       emit(
         `build_fail:${attempt}`,
         `**Build attempt ${attempt} failed** — ${count} compiler error${count === 1 ? '' : 's'}${codesStr}. Attempting auto-fix…`,

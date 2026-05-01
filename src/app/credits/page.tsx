@@ -88,7 +88,7 @@ export default function CreditsPage() {
             </span>
             <span className="text-gray-500 mb-1">credits</span>
             <button
-              onClick={refetch}
+              onClick={() => refetch(true)}
               disabled={isLoading}
               className="ml-auto text-xs text-gray-500 hover:text-gray-300 transition"
             >

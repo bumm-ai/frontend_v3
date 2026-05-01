@@ -16,11 +16,13 @@
 import { WS_BASE } from '@/config/api';
 
 type MessageHandler = (data: unknown) => void;
+type ConnectHandler = () => void;
 type TokenFactory  = () => string;
 
 interface ChannelState {
   ws: WebSocket | null;
   handlers: Set<MessageHandler>;
+  connectHandlers: Set<ConnectHandler>;
   getToken: TokenFactory;
   attempt: number;
   timer: ReturnType<typeof setTimeout> | null;
@@ -56,6 +58,7 @@ class WsHub {
     channel: string,
     onMessage: MessageHandler,
     getToken: TokenFactory | string,
+    onConnect?: ConnectHandler,
   ): () => void {
     // Normalise: accept static string for backward compat
     const factory: TokenFactory =
@@ -64,7 +67,7 @@ class WsHub {
     let state = this.channels.get(channel);
 
     if (!state) {
-      state = { ws: null, handlers: new Set(), getToken: factory, attempt: 0, timer: null, closing: false };
+      state = { ws: null, handlers: new Set(), connectHandlers: new Set(), getToken: factory, attempt: 0, timer: null, closing: false };
       this.channels.set(channel, state);
       this._connect(channel, state);
     } else {
@@ -73,9 +76,11 @@ class WsHub {
     }
 
     state.handlers.add(onMessage);
+    if (onConnect) state.connectHandlers.add(onConnect);
 
     return () => {
       state!.handlers.delete(onMessage);
+      if (onConnect) state!.connectHandlers.delete(onConnect);
       if (state!.handlers.size === 0) {
         this._close(channel, state!);
       }
@@ -95,6 +100,12 @@ class WsHub {
       const url = channelToUrl(channel, token);
       const ws = new WebSocket(url);
       state.ws = ws;
+
+      ws.onopen = () => {
+        // Notify subscribers that the (re)connection is established.
+        // useContractStream uses this to re-seed from REST after server restarts.
+        state.connectHandlers.forEach((h) => h());
+      };
 
       ws.onmessage = (e) => {
         state.attempt = 0;

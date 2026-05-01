@@ -111,16 +111,41 @@ export function useContractStream(uid: string | null): ContractStream {
 
     // Authoritative initial state via REST. Handles reload / first mount.
     let cancelled = false;
-    apiClient
-      .getContractStatus(uid)
-      .then((s) => {
-        if (cancelled) return;
-        statusCache.set(uid, s);
-        setStatus(s);
-      })
-      .catch(() => {
-        /* network/auth transient — WS will deliver status when it connects */
-      });
+    const fetchStatus = () => {
+      apiClient
+        .getContractStatus(uid)
+        .then((s) => {
+          if (cancelled) return;
+          statusCache.set(uid, s);
+          setStatus(s);
+        })
+        .catch(() => {
+          /* network/auth transient — WS will deliver status when it connects */
+        });
+    };
+    fetchStatus();
+
+    // REST polling fallback — runs in parallel with WS to catch the case where
+    // the socket dies mid-deploy and never delivers ws_pipeline_complete.
+    // Observed bug (2026-04-28, contract 04567d23): WS disconnected at 13:05:39
+    // while the deploy was still uploading; deploy finished at 13:05:46 and the
+    // server emitted ws_pipeline_complete, but the client socket was already
+    // gone. wsHub auto-reconnect helps but not always — backend closes terminal
+    // sockets with code 1000, which races against the final message. Polling
+    // is the belt-and-suspenders guarantee that REST authoritative state lands
+    // in the UI even when WS misses the last push. Stops on terminal phases.
+    const pollInterval = setInterval(() => {
+      const cached = statusCache.get(uid);
+      if (
+        cached?.phase === 'done' ||
+        cached?.phase === 'failed' ||
+        cached?.phase === 'cancelled'
+      ) {
+        clearInterval(pollInterval);
+        return;
+      }
+      fetchStatus();
+    }, 5000);
 
     // Live updates via shared hub.
     // eslint-disable-next-line prefer-const
@@ -142,14 +167,19 @@ export function useContractStream(uid: string | null): ContractStream {
           msg.phase === 'cancelled' ||
           msg.phase === 'paused_degraded'
         ) {
+          clearInterval(pollInterval);
           setTimeout(() => unsub?.(), 0);
         }
       },
       () => getAccessToken() ?? '',
+      // Re-seed from REST on every WS (re)connect — catches server restarts where
+      // the final pipeline push was lost while the socket was down.
+      fetchStatus,
     );
 
     return () => {
       cancelled = true;
+      clearInterval(pollInterval);
       unsub?.();
     };
   }, [uid]);

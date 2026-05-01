@@ -35,6 +35,27 @@ export const clearTokens = (): void => {
   localStorage.removeItem('refresh_token');
 };
 
+/**
+ * Wipe every per-session localStorage entry the dashboard caches under
+ * the `bumm_*` prefix (per-wallet projects, per-contract chat history,
+ * deployment metadata, etc).  Called on Sign out so the next login —
+ * even with the same wallet — starts from a clean slate instead of
+ * resurrecting "ghost" data the backend no longer authorises.
+ *
+ * Tokens are NOT touched here — `clearTokens()` handles those — so this
+ * helper is safe to call independently if the dashboard ever needs a
+ * cache reset without a full sign-out.
+ */
+export const clearSessionStorage = (): void => {
+  if (typeof window === 'undefined') return;
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('bumm_')) keysToRemove.push(key);
+  }
+  for (const key of keysToRemove) localStorage.removeItem(key);
+};
+
 // ── Core fetch wrapper ────────────────────────────────────────────────────────
 
 async function apiFetch<T>(
@@ -238,6 +259,37 @@ export class ApiClient {
     return apiFetch(ENDPOINTS.CONTRACT_CHAT(uid), {
       method: 'PUT',
       body: JSON.stringify({ messages }),
+    });
+  }
+
+  /**
+   * Replace contract source with user-edited code.
+   * Backend rearms pipeline at `phase=generated`; caller must follow up
+   * with `triggerBuild(uid)` to compile.
+   */
+  async replaceContractCode(
+    uid: string,
+    code: string,
+  ): Promise<{ uid: string; phase: string; code_version: number; next_step: string }> {
+    return apiFetch(ENDPOINTS.CONTRACT_CODE(uid), {
+      method: 'PUT',
+      body: JSON.stringify({ code }),
+    });
+  }
+
+  /**
+   * Re-generate the contract with explicit user-supplied directives.
+   * Used to escape PAUSED_DEGRADED or to apply architectural changes the
+   * audit pipeline cannot self-fix. Backend rearms at `phase=generated`;
+   * caller must follow up with `triggerBuild(uid)`.
+   */
+  async regenerateContract(
+    uid: string,
+    feedback: string,
+  ): Promise<{ uid: string; phase: string; code_version?: number }> {
+    return apiFetch(`/api/v1/contracts/${uid}/regenerate`, {
+      method: 'POST',
+      body: JSON.stringify({ feedback }),
     });
   }
 

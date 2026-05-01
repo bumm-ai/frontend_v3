@@ -13,6 +13,7 @@ import { useStageReports } from '@/hooks/useStageReports';
 import { apiClient } from '@/services/api';
 import { tryRefresh } from '@/services/authService';
 import type { ChatMessagePayload } from '@/lib/api';
+import { humanizeErrorCodes } from '@/lib/errorTranslate';
 // import { WalletDebug } from '../debug/WalletDebug';
 // import { SimpleWalletTest } from '../debug/SimpleWalletTest';
 import LoginScreen from './LoginScreen';
@@ -37,8 +38,22 @@ function phaseToAction(
   return 'inactive';
 }
 
-/** Map backend pipeline phase to frontend project status */
-function mapPhaseToStatus(phase: string, programId?: string | null): Project['status'] {
+/** Map backend pipeline phase to frontend project status.
+ *
+ * For terminal phases (`failed`, `paused_degraded`) we don't drop the
+ * project to "draft" — instead we surface the highest milestone the
+ * contract actually reached, so a user whose deploy failed mid-flight
+ * still sees "Audited" and can retry publish without losing context.
+ */
+function mapPhaseToStatus(
+  phase: string,
+  programId?: string | null,
+  buildOk?: boolean,
+  auditOk?: boolean,
+): Project['status'] {
+  // Terminal hard-success: program is on-chain regardless of phase value.
+  if (programId) return 'deployed';
+
   switch (phase) {
     case 'pending': case 'started': case 'enriching': return 'initializing';
     case 'generating': return 'in-progress';
@@ -47,8 +62,16 @@ function mapPhaseToStatus(phase: string, programId?: string | null): Project['st
     case 'auditing_static': case 'auditing_llm': case 'audit_fixing': return 'built';
     case 'deploying': return 'audited';
     case 'done':
-      return programId ? 'deployed' : 'completed';
-    case 'failed': return 'draft';
+      return 'completed';
+    case 'failed':
+    case 'paused_degraded':
+    case 'cancelled': {
+      // Reflect the highest milestone the contract actually reached so the
+      // user has correct context (e.g. "Audited" → can retry publish).
+      if (auditOk) return 'audited';
+      if (buildOk) return 'built';
+      return 'draft';
+    }
     default: return 'in-progress';
   }
 }
@@ -137,12 +160,39 @@ export default function Dashboard() {
     };
   }, []);
   
-  const [messages, setMessages] = useState<ChatMessage[]>([{
-    id: '1',
+  // Per-project message map: uid → ChatMessage[]. Switching projects is instant
+  // (no fetch needed if already loaded this session). Fixes history loss on switch.
+  const [messagesByUid, setMessagesByUid] = useState<Record<string, ChatMessage[]>>({});
+
+  // Key used for the "new chat" scratch buffer — no project selected yet.
+  const SCRATCH_UID = '__scratch__';
+
+  const _WELCOME_MSG: ChatMessage = {
+    id: 'welcome',
     content: 'Hello! I\'m here to help you build on Solana. What would you like to create today?',
     timestamp: new Date(),
     isUser: false,
-  }]);
+  };
+
+  // Derived: messages for the currently viewed project (or scratch buffer if none).
+  const activeUid = currentProject?.uid ?? SCRATCH_UID;
+  const messages: ChatMessage[] = messagesByUid[activeUid] ?? [_WELCOME_MSG];
+
+  // Drop-in replacement for the old useState setter. Always writes to the slot of
+  // the project that is active at call time (uses ref so async handlers are safe).
+  // Falls back to SCRATCH_UID so "new chat" messages are never silently dropped.
+  const setMessages = useCallback(
+    (updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
+      setMessagesByUid(prevMap => {
+        const uid = currentProjectRef.current?.uid ?? SCRATCH_UID;
+        const prev = prevMap[uid] ?? [_WELCOME_MSG];
+        const next = typeof updater === 'function' ? updater(prev) : updater;
+        return { ...prevMap, [uid]: next };
+      });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
   const [isBuilding, setIsBuilding] = useState(false);
   const [generatedCode, setGeneratedCode] = useState<{ projectUid: string; code: string } | null>(null);
   const [generationAttemptFailed, setGenerationAttemptFailed] = useState(0);
@@ -155,16 +205,65 @@ export default function Dashboard() {
   // Step triggering state removed — button/animation derive from contract.status
   // via deriveUIFromStatus (no local mirrors needed).
 
-  // Save message history for current project in localStorage
+  // Persist every project's messages to localStorage on change.
+  // This is a write-only cache: cold-start reads happen in handleSelectProject.
   useEffect(() => {
-    if (typeof window !== 'undefined' && currentProject && messages.length > 0) {
-      try {
-        localStorage.setItem(`bumm_chat_history_${currentProject.uid}`, JSON.stringify(messages));
-      } catch (err) {
-        console.warn('Failed to save chat history to localStorage:', err);
+    if (typeof window === 'undefined') return;
+    for (const [uid, msgs] of Object.entries(messagesByUid)) {
+      if (msgs.length > 0) {
+        try {
+          localStorage.setItem(`bumm_chat_history_${uid}`, JSON.stringify(msgs));
+        } catch {
+          // Storage full — non-fatal
+        }
       }
     }
-  }, [messages, currentProject]);
+  }, [messagesByUid]);
+
+  // ── Backend chat persistence ─────────────────────────────────────────────
+  // Mirror messagesByUid to the backend so build/audit/deploy progress
+  // messages survive logout/login. Without this, only the initial chat
+  // snapshot saved at project-create time persists — every "Build
+  // succeeded", "Audit complete", "Deploy failed" added later via
+  // addAIMessageForProject lives only in local state and disappears on
+  // sign-out. Per-project hash-guard avoids redundant PUTs when nothing
+  // changed; debounce coalesces bursts (e.g. multiple stage reports).
+  const lastSavedChatHashRef = useRef<Record<string, string>>({});
+  useEffect(() => {
+    if (!auth.isAuthenticated) return;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    for (const [uid, msgs] of Object.entries(messagesByUid)) {
+      if (uid === SCRATCH_UID) continue;
+      if (!msgs || msgs.length === 0) continue;
+      // Cheap content hash — id + content length covers every additive
+      // change (most chat updates are appends; we don't edit history).
+      const hash = `${msgs.length}:${msgs.map(m => `${m.id}#${m.content.length}`).join('|')}`;
+      if (lastSavedChatHashRef.current[uid] === hash) continue;
+      const t = setTimeout(() => {
+        const chatForBackend = msgs.map(m => ({
+          role: m.isUser ? 'user' : 'assistant',
+          content: m.content,
+          timestamp:
+            m.timestamp instanceof Date
+              ? m.timestamp.toISOString()
+              : String(m.timestamp),
+        }));
+        apiClient
+          .saveContractChat(uid, chatForBackend)
+          .then(() => {
+            lastSavedChatHashRef.current[uid] = hash;
+          })
+          .catch(() => {
+            // Best-effort — leave hash un-set so we retry on next change.
+          });
+      }, 1500);
+      timers.push(t);
+    }
+    return () => {
+      for (const t of timers) clearTimeout(t);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messagesByUid, auth.isAuthenticated]);
 
 
   // Auto-switch to chat when JWT session is restored or login completes
@@ -173,6 +272,28 @@ export default function Dashboard() {
       setCurrentState('chat');
       loadBalance().catch(() => {});
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auth.isAuthenticated]);
+
+  // ── Sign-out cleanup ──────────────────────────────────────────────────────
+  // When the auth state flips to false (Sign out button), wipe ALL local
+  // dashboard state so the next login (even with the same wallet) starts
+  // from a clean slate. Without this, projects/messages/currentProject
+  // survived in memory and the user saw "ghost" data from the prior session
+  // until they cleared browser cache.
+  const wasAuthedRef = useRef(auth.isAuthenticated);
+  useEffect(() => {
+    if (wasAuthedRef.current && !auth.isAuthenticated) {
+      setCurrentProject(null);
+      setProjects([]);
+      setMessagesByUid({});
+      setActiveContractUid(null);
+      setTrackedContracts({});
+      setGeneratedCode(null);
+      setPendingStep(null);
+      setCurrentState('login');
+    }
+    wasAuthedRef.current = auth.isAuthenticated;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.isAuthenticated]);
 
@@ -213,8 +334,14 @@ export default function Dashboard() {
       setPendingStep(null);
     }
     // Terminal: clean up trackedContracts so multiContract WS stops for this project
-    if (status.phase === 'done' || status.phase === 'failed') {
+    if (
+      status.phase === 'done' ||
+      status.phase === 'failed' ||
+      status.phase === 'cancelled' ||
+      status.phase === 'paused_degraded'
+    ) {
       const pid = pendingStep.projectId;
+      setPendingStep(null);
       setTrackedContracts(prev => { const n = { ...prev }; delete n[pid]; return n; });
     }
   }, [projectStatuses, pendingStep]);
@@ -232,7 +359,12 @@ export default function Dashboard() {
         try {
           const status = await apiClient.getContractStatus(cuid);
           setProjectStatuses(prev => ({ ...prev, [pid]: status }));
-          if (status.phase === 'done' || status.phase === 'failed') {
+          if (
+            status.phase === 'done' ||
+            status.phase === 'failed' ||
+            status.phase === 'cancelled' ||
+            status.phase === 'paused_degraded'
+          ) {
             setTrackedContracts(prev => { const n = { ...prev }; delete n[pid]; return n; });
             setPendingStep(prev => prev?.projectId === pid ? null : prev);
           }
@@ -275,7 +407,12 @@ export default function Dashboard() {
     if (pending === 'deploy' && (!!curr.program_id || curr.phase === 'deploying')) {
       setPendingStep(null);
     }
-    if (curr.phase === 'failed') setPendingStep(null);
+    if (
+      curr.phase === 'done' ||
+      curr.phase === 'failed' ||
+      curr.phase === 'cancelled' ||
+      curr.phase === 'paused_degraded'
+    ) setPendingStep(null);
 
     // [A] Generate phase: update status message in chat while generating
     if (pipelineMsgId) {
@@ -285,7 +422,15 @@ export default function Dashboard() {
         generating:       '⚡ Generating Solana smart contract...',
         generated:        '📋 Code ready — click Build to compile.',
         building:         '🔧 Building with Anchor framework...',
-        build_fixing:     '🔧 Fixing build errors...',
+        build_fixing: (() => {
+          const count = curr.build_errors_count ?? 0;
+          const errorDesc = humanizeErrorCodes(curr.top_error_codes ?? []);
+          const attempt = curr.build_attempt ?? 1;
+          const base = count > 0
+            ? `🔧 Auto-fixing ${count} error${count > 1 ? 's' : ''} (attempt ${attempt})…`
+            : `🔧 Fixing build errors (attempt ${attempt})…`;
+          return errorDesc ? `${base}\n${errorDesc}` : base;
+        })(),
         auditing_static:  '🔒 Running static security audit...',
         auditing_llm:     '🔒 Running AI security review...',
         audit_fixing:     '🔒 Fixing security issues...',
@@ -299,6 +444,24 @@ export default function Dashboard() {
           ? { ...m, content: phaseLabels[curr.phase] ?? `⚙️ ${curr.phase}...` }
           : m
       ));
+    }
+
+    // [A2] Build-fixing progress: last_fix_description changed → show what was patched.
+    // Only fires while phase=build_fixing and only when the description actually changes
+    // so we don't spam repeated messages on WS heartbeats.
+    if (
+      curr.phase === 'build_fixing' &&
+      curr.last_fix_description &&
+      curr.last_fix_description !== prev?.last_fix_description &&
+      activeContractUid
+    ) {
+      const source = curr.last_fix_source === 'knowledge_base' ? ' _(KB)_' : curr.last_fix_source === 'llm_generated' ? ' _(AI)_' : '';
+      const errorDesc = humanizeErrorCodes(curr.top_error_codes ?? []);
+      const desc = curr.last_fix_description.replace(/^hard_rule:\s*/i, '').slice(0, 180);
+      addAIMessageForProject(
+        activeContractUid,
+        `🔧 **Applied fix${source}:** ${desc}${errorDesc ? `\n_Errors: ${errorDesc}_` : ''}`,
+      );
     }
 
     // [B] Generate complete: next_step just became 'build'
@@ -335,6 +498,13 @@ export default function Dashboard() {
       };
       setCurrentProject(earlyProject);
       updateProjects(prev => [earlyProject, ...prev.filter(p => p.uid !== uid)]);
+      // Migrate scratch messages → new project slot so the chat stays visible
+      setMessagesByUid(prev => {
+        const scratch = prev[SCRATCH_UID];
+        if (!scratch || prev[uid]) return prev;
+        const { [SCRATCH_UID]: _, ...rest } = prev;
+        return { ...rest, [uid]: scratch };
+      });
       apiClient.updateContract(uid, { name: earlyName }).catch(() => {});
       const chatForBackend = chatSnapshot.map(m => ({
         role: m.isUser ? 'user' : 'assistant',
@@ -555,7 +725,16 @@ export default function Dashboard() {
     // Guard: prev must be non-null — connecting to an already-failed project
     // (e.g. deploy ran out of funds earlier) must not re-add a failure message.
     if (prev && curr.phase === 'failed' && prev.phase !== 'failed' && activeContractUid) {
-      addAIMessageForProject(activeContractUid, `**Pipeline failed:** ${curr.error ?? 'Unknown error'}`);
+      const errorDesc = humanizeErrorCodes(curr.top_error_codes ?? []);
+      const rawError = curr.error ?? 'Unknown error';
+      // Show human-readable error description when available; raw error as fallback.
+      const userFacingError = errorDesc
+        ? `${errorDesc}\n\n_Technical detail: ${rawError.slice(0, 200)}_`
+        : rawError;
+      addAIMessageForProject(
+        activeContractUid,
+        `**Build failed after all auto-repair attempts.**\n\n${userFacingError}\n\nYou can edit the prompt and try again, or paste corrected code.`,
+      );
       setPipelineMsgId(null);
     }
 
@@ -613,7 +792,7 @@ export default function Dashboard() {
       const backendProjects: Project[] = res.contracts.map(c => ({
         uid: c.uid,
         name: c.name || `Contract ${c.uid.slice(0, 8)}`,
-        status: mapPhaseToStatus(c.phase, c.program_id),
+        status: mapPhaseToStatus(c.phase, c.program_id, c.build_ok, c.audit_ok),
         created_at: c.created_at,
         updated_at: c.updated_at,
         task: 'generate' as const,
@@ -1067,6 +1246,15 @@ export default function Dashboard() {
         updateProjects(prev => [newProject, ...prev.filter(p => p.uid !== created.uid)]);
         projectCreatedRef.current = created.uid;
 
+        // Migrate scratch messages (review chat before paste) → new project slot
+        // so the conversation that led to this paste stays visible.
+        setMessagesByUid(prev => {
+          const scratch = prev[SCRATCH_UID];
+          if (!scratch || prev[created.uid]) return prev;
+          const { [SCRATCH_UID]: _, ...rest } = prev;
+          return { ...rest, [created.uid]: scratch };
+        });
+
         // Show code in the editor immediately (no need to wait for WS)
         setGeneratedCode({ projectUid: created.uid, code });
 
@@ -1124,6 +1312,91 @@ export default function Dashboard() {
     [currentProject],
   );
 
+  // ── Code-edit + regenerate flows ──────────────────────────────────────────
+  // Save user-edited code via PUT /code, then chain a build trigger so the
+  // pipeline re-runs against the new source. Errors propagate to the editor
+  // (it shows them inline next to the Save button).
+  const handleSaveCode = useCallback(
+    async (uid: string, code: string) => {
+      try {
+        await tryRefresh();
+        await apiClient.replaceContractCode(uid, code);
+      } catch (err) {
+        addAIMessage(
+          `Save failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        );
+        throw err;
+      }
+      // Trigger build only after save succeeds; failure here is non-fatal
+      // for the save itself — user can retry build from the action button.
+      try {
+        setActiveContractUid(uid);
+        await apiClient.triggerBuild(uid);
+        addAIMessage('Code saved (v↑) — rebuilding…');
+      } catch (err) {
+        addAIMessage(
+          `Code saved but build trigger failed: ${
+            err instanceof Error ? err.message : 'Unknown error'
+          }. Press Build to retry.`,
+        );
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  // Retry a deploy that previously failed mid-upload. Backend's
+  // `_rearm_failed_deploy_if_needed` detects (build_ok && audit_ok &&
+  // !program_id && phase=failed) and repositions the LangGraph at the
+  // pre-deploy interrupt — so a plain POST /deploy resumes from there.
+  // No regenerate / rebuild needed: the .so is still in /builds/_cache.
+  const handleRetryDeploy = useCallback(
+    async (uid: string) => {
+      try {
+        await tryRefresh();
+        setActiveContractUid(uid);
+        await apiClient.triggerDeploy(uid);
+        addAIMessage('Retrying deploy…');
+      } catch (err) {
+        addAIMessage(
+          `Retry deploy failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        );
+        throw err;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  // Regenerate from user feedback. Backend rewrites the source via LLM and
+  // pauses at `phase=generated`; we follow up with a build trigger.
+  const handleRegenerateWithFeedback = useCallback(
+    async (uid: string, feedback: string) => {
+      try {
+        await tryRefresh();
+        await apiClient.regenerateContract(uid, feedback);
+        addAIMessage('Regenerating with your feedback…');
+      } catch (err) {
+        addAIMessage(
+          `Regenerate failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        );
+        throw err;
+      }
+      try {
+        setActiveContractUid(uid);
+        await apiClient.triggerBuild(uid);
+      } catch (err) {
+        addAIMessage(
+          `Regenerated but build trigger failed: ${
+            err instanceof Error ? err.message : 'Unknown error'
+          }. Press Build to retry.`,
+        );
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
   // ── Computed UI state (no useState — pure derivation every render) ────────
   // Priority: REST-pre-loaded or multiContract WS status → single WS status.
   // handleSelectProject no longer opens a WS (to avoid spurious transitions),
@@ -1149,42 +1422,17 @@ export default function Dashboard() {
   // Project management functions
   const handleSelectProject = async (project: Project) => {
     try {
-      // Save current messages for current project (if any)
-      // Skip if uid is a stub (not yet a real backend contract)
-      const isRealUid = currentProject && !currentProject.uid.startsWith('stub-');
-      if (isRealUid && messages.length > 0) {
-        localStorage.setItem(`bumm_chat_history_${currentProject!.uid}`, JSON.stringify(messages));
-        // Also save to backend
-        const chatForBackend = messages
-          .filter(m => !m.content.startsWith('⏳') && !m.content.startsWith('⚙️'))
-          .map(m => ({
-            role: m.isUser ? 'user' : 'assistant',
-            content: m.content,
-            timestamp: m.timestamp instanceof Date ? m.timestamp.toISOString() : m.timestamp,
-          }));
-        apiClient.saveContractChat(currentProject!.uid, chatForBackend).catch(() => {});
-      }
-
-      // Switch to new project — use REST for initial status instead of WS.
-      // Opening a WS here would send the current status as a "new" event,
-      // causing transition effects [C]/[D]/[E]/[F] to re-fire (spurious
-      // "build succeeded", "audit complete" messages on every project switch).
-      //
-      // CRITICAL: reset prevStatusRef BEFORE setCurrentProject so that if a
-      // stale WS heartbeat arrives right after the switch, the transition guards
-      // (which compare prev vs curr) see prev=null and silently skip.
-      // Without this reset, switching to a project that already has build_ok=true
-      // while prevStatusRef still holds the previous project's build_ok=false
-      // would fire the [C] "build complete" transition spuriously.
+      // CRITICAL: reset prevStatusRef BEFORE setCurrentProject so stale WS
+      // heartbeats arriving after the switch see prev=null and silently skip.
       prevStatusRef.current = null;
       setCurrentProject(project);
+
       // Pre-populate projectStatuses via REST so activeStatus is correct immediately.
-      // Does NOT trigger prevStatusRef / transition effects.
       apiClient.getContractStatus(project.bummUid ?? project.uid)
         .then(status => setProjectStatuses(prev => ({ ...prev, [project.uid]: status })))
         .catch(() => {});
 
-      // Fetch code from API so ChatScreen doesn't need localStorage cache
+      // Fetch code so ChatScreen always shows the latest source.
       apiClient.getContractCode(project.uid).then(result => {
         if (result.code) {
           setCurrentProject(prev => prev && prev.uid === project.uid
@@ -1193,7 +1441,11 @@ export default function Dashboard() {
         }
       }).catch(() => {});
 
-      // Try to load chat from backend first, then localStorage fallback
+      // Messages: if already loaded in this session, switch is instant — no fetch.
+      if (messagesByUid[project.uid] !== undefined) return;
+
+      // Cold load: try backend first, then localStorage.
+      // This path only runs once per project per session.
       try {
         const chatRes = await apiClient.getContractChat(project.uid);
         if (chatRes.messages && chatRes.messages.length > 0) {
@@ -1203,30 +1455,33 @@ export default function Dashboard() {
             timestamp: new Date((m.timestamp as string) || Date.now()),
             isUser: m.role === 'user',
           }));
-          setMessages(loadedMessages);
+          setMessagesByUid(prev => ({ ...prev, [project.uid]: loadedMessages }));
+          // Pre-seed the save-hash so the auto-save effect doesn't immediately
+          // PUT the same messages back to the backend on this cold load.
+          const initHash = `${loadedMessages.length}:${loadedMessages
+            .map(m => `${m.id}#${m.content.length}`)
+            .join('|')}`;
+          lastSavedChatHashRef.current[project.uid] = initHash;
           return;
         }
       } catch (_) {
-        // Backend unavailable, fall through to localStorage
+        // Backend unavailable — fall through to localStorage
       }
 
-      // Fallback: localStorage
       const savedMessages = localStorage.getItem(`bumm_chat_history_${project.uid}`);
       if (savedMessages) {
         try {
-          const parsedMessages = JSON.parse(savedMessages);
-          const messagesWithDates = parsedMessages.map((msg: ChatMessage) => ({
+          const parsed = JSON.parse(savedMessages);
+          const withDates = parsed.map((msg: ChatMessage) => ({
             ...msg,
-            timestamp: new Date(msg.timestamp)
+            timestamp: new Date(msg.timestamp),
           }));
-          setMessages(messagesWithDates);
-        } catch (err) {
-          console.warn('Failed to parse saved messages:', err);
-          setMessages([]);
+          setMessagesByUid(prev => ({ ...prev, [project.uid]: withDates }));
+        } catch {
+          setMessagesByUid(prev => ({ ...prev, [project.uid]: [] }));
         }
-      } else {
-        setMessages([]);
       }
+      // If nothing found: first visit — welcome message shown via derived `messages`.
 
     } catch (err) {
       console.error('Failed to switch project:', err);
@@ -1265,7 +1520,8 @@ export default function Dashboard() {
       if (currentProject?.uid === project.uid) {
         const remainingProjects = projects.filter(p => p.uid !== project.uid);
         setCurrentProject(remainingProjects.length > 0 ? remainingProjects[0] : null);
-        if (remainingProjects.length === 0) setMessages([]);
+        // Drop deleted project's messages from the map.
+        setMessagesByUid(prev => { const n = { ...prev }; delete n[project.uid]; return n; });
       }
 
       analytics.trackProjectDelete(project.uid);
@@ -1278,6 +1534,12 @@ export default function Dashboard() {
   const handleStopProject = async (project: Project) => {
     try {
       const res = await apiClient.cancelContract(project.uid);
+      // Always clear pending animation immediately — backend confirmed the state.
+      setPendingStep(prev => prev?.projectId === project.uid ? null : prev);
+      // Refresh cached status so the animation stops without waiting for the next WS tick.
+      apiClient.getContractStatus(project.uid).then(freshStatus => {
+        setProjectStatuses(prev => ({ ...prev, [project.uid]: freshStatus }));
+      }).catch(() => {});
       if (res.cancelled) {
         addAIMessage(`Pipeline stopped for "${project.name || 'Untitled'}" (was: ${res.phase_at_cancel}). Do you want to roll back the code?`);
         setRollbackProject(project);
@@ -1378,7 +1640,11 @@ export default function Dashboard() {
             generationAttemptFailed={generationAttemptFailed}
             buttonState={ui.buttonState}
             animationStage={ui.animationStage}
+            contractStatus={contract.status}
             onStartStep={handleStartStep}
+            onSaveCode={handleSaveCode}
+            onRegenerateWithFeedback={handleRegenerateWithFeedback}
+            onRetryDeploy={handleRetryDeploy}
           />
         );
       

@@ -4,8 +4,8 @@
 > Claude reads this at session start to understand current state.
 
 ## Last Updated
-- **Date:** 2026-04-08
-- **By:** Nikolas + Claude Code — UI state refactor, tests, chat enhancements
+- **Date:** 2026-04-30
+- **By:** Nikolas + Claude Code — Week 5 + Week 6 frontend deltas: rose-coloured "Re-deploy required" banner driven by Migration 0010's `requires_redeploy` / `stale_program_id` flags, Retry-Deploy button (`canRetryDeploy` derivation), WS+REST polling fallback in `useContractStream` (closes the WS-died-during-deploy edge case), `RegenerateFeedbackModal` for `POST /regenerate`, paste-mode "Apply edits" surface for `PUT /code`, stage timers / pipeline stages card, error-translate utility. Week 5 + Week 6 dev logs added under `docs/`.
 
 ---
 
@@ -15,10 +15,11 @@ The frontend is a **thin orchestration client** — it does not contain any Lang
 
 ```
 User → Dashboard.tsx
-         ├── useContract (WS + API)        → backend /ws/contracts/{uid}, /status, /code
-         ├── deriveUIFromStatus (pure fn)  → drives ALL button/animation state
-         ├── handleStartStep (optimistic)  → POST /build/{uid} | /audit/{uid} | /deploy/{uid}
-         └── ChatScreen.tsx               → chat + action button + contract editor
+         ├── useContractStream (WS + REST polling fallback) → backend /ws/contracts/{uid}, /status, /code
+         ├── deriveUIFromStatus (pure fn)                   → drives ALL button/animation state
+         ├── handleStartStep (optimistic)                   → POST /build/{uid} | /audit/{uid} | /deploy/{uid}
+         ├── handleRetryDeploy                              → reuses /deploy/{uid} after find_so-bug recovery
+         └── ChatScreen.tsx                                 → chat + ActionButton + code editor + Re-deploy banner
 ```
 
 ### Two distinct user flows
@@ -88,14 +89,32 @@ const actionButtonState: ActionButtonState =
 | `triggerAudit` | `POST /api/v1/audit/{uid}` | Trigger audit step |
 | `triggerDeploy` | `POST /api/v1/deploy/{uid}?confirm=true` | Trigger deploy step |
 
-### WebSocket (`useContract`)
-**File:** `src/hooks/useContract.ts`
+### WebSocket + REST polling fallback (`useContractStream`)
+**File:** `src/hooks/useContractStream.ts`
 
-- Connects to `/ws/contracts/{uid}?token=<jwt>`
-- JWT expiry (code 4001) → auto refresh via `tryRefresh()` → reconnect
-- Exponential backoff on disconnect: 1s, 2s, 5s, 10s
-- Closes cleanly on `phase=done|failed` (code 1000)
-- `deriveUIFromStatus` called with live `status` on every WS message
+- Connects to `/ws/contracts/{uid}?token=<jwt>`.
+- JWT expiry (code 4001) → auto refresh via `tryRefresh()` → reconnect.
+- Exponential backoff on disconnect: 1 s, 2 s, 5 s, 10 s.
+- Closes cleanly on `phase=done|failed` (code 1000).
+- **Week 6 — REST polling fallback.** Parallel `setInterval(fetchStatus, 5000)` polls `GET /api/v1/contracts/{uid}/status`; auto-stops on terminal phase via shared `statusCache` check. Closes the WS-died-during-deploy edge case identified in Week 4 known gaps.
+- `deriveUIFromStatus` called with live `status` on every WS message *or* polling tick.
+
+### Re-deploy required banner + Retry-Deploy button (Week 6)
+**File:** `src/components/dashboard/ChatScreen.tsx`
+
+- `requiresRedeploy = !!contractStatus?.requires_redeploy` — driven by Migration 0010 backend flag.
+- Rose-coloured banner with `stale_program_id` prefix and a Re-deploy button. When this banner is active, the existing yellow regenerate banner suppresses itself so the user sees the stronger signal.
+- `canRetryDeploy = isFailed && build_ok && audit_ok && !program_id` — surfaces a Retry-Deploy button that reuses backend `_rearm_failed_deploy_if_needed` via `apiClient.triggerDeploy`. Local `retryingDeploy` state gates double-clicks.
+
+### Regenerate feedback flow (Week 5)
+**File:** `src/components/ui/RegenerateFeedbackModal.tsx`
+
+- Reachable when `phase ∈ {paused_degraded, failed}`.
+- Captures user feedback in a textarea, posts to `/contracts/{uid}/regenerate` with audit-finding context attached server-side.
+- Pipeline pauses again at `phase=generated` for review.
+
+### Paste-mode "Apply edits" (Week 5)
+- Power-user surface for `PUT /contracts/{uid}/code`. Replaces source on an existing contract outside the LLM loop and chains a build trigger so the pipeline re-runs against the new source.
 
 ### Enhanced Chat Notifications
 **File:** `src/components/dashboard/Dashboard.tsx`
@@ -198,8 +217,8 @@ NEXT_PUBLIC_WS_URL=ws://localhost:8080
 ## Weekly dev reports (hackathon / stakeholders)
 
 - **How to write:** **`docs/WEEKLY_DEV_LOG.md`** — each report should **continue** the previous one (delta + logical next step), not restate the entire stack every time.
-- **Full journey (4 parts, start → today):**  
-  **[Week 1](./docs/DEV_LOG_BUMM_WEEK_01.md)** · **[Week 2](./docs/DEV_LOG_BUMM_WEEK_02.md)** · **[Week 3](./docs/DEV_LOG_BUMM_WEEK_03.md)** · **[Week 4 — current state](./docs/DEV_LOG_BUMM_WEEK_04.md)** — insert real dates in each file; Week 4 is the **as-of-today** snapshot.
+- **Full journey (6 parts, start → today):**  
+  **[Week 1](./docs/DEV_LOG_BUMM_WEEK_01.md)** · **[Week 2](./docs/DEV_LOG_BUMM_WEEK_02.md)** · **[Week 3](./docs/DEV_LOG_BUMM_WEEK_03.md)** · **[Week 4](./docs/DEV_LOG_BUMM_WEEK_04.md)** · **[Week 5](./docs/DEV_LOG_BUMM_WEEK_05.md)** · **[Week 6 — current state](./docs/DEV_LOG_BUMM_WEEK_06.md)** — Week 6 is the **as-of-today** snapshot (audit depth + the `find_so` wrong-binary CRITICAL fix as headline).
 
 ---
 
@@ -207,6 +226,8 @@ NEXT_PUBLIC_WS_URL=ws://localhost:8080
 
 | Item | Priority | Notes |
 |------|----------|-------|
-| KB / internal libraries (roadmap) | Medium | Commercial track — scope not detailed in public docs |
-| `user_sol_balance` display | Low | Already filled by backend; frontend needs to show it in deploy confirm modal |
-| E2E tests | Low | Blocked by Phantom wallet bootstrap — needs mock auth adapter or Playwright wallet stub |
+| Wallet mock / Playwright E2E | High | Still blocked — carry forward from Week 4. |
+| Prompt-cache hit-rate visibility in UI | Medium | Backend logs `cache_read_input_tokens` / `cache_creation_input_tokens`; frontend should surface in dev/admin view. |
+| `user_sol_balance` display in deploy modal | Medium | Already filled by backend (`requires_redeploy`, `stale_program_id` exposed); generic SOL surfacing still partial. |
+| KB / internal libraries (roadmap) | Medium | Commercial track — scope not detailed in public docs. |
+| Modal polling deduplication | ✅ Resolved | Single `useContractStream` instance from Dashboard + REST polling fallback (Week 6). |

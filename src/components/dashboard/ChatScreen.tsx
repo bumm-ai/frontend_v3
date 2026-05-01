@@ -11,9 +11,10 @@ import { InfoPanel } from '../ui/InfoPanel';
 import { DashboardFooter } from '../ui/DashboardFooter';
 import { InteractiveCodeEditor } from '../ui/InteractiveCodeEditor';
 import { SmartActionButton } from '../ui/SmartActionButton';
+import { RegenerateFeedbackModal } from '../ui/RegenerateFeedbackModal';
 import { ChatMessage, CodeSource, ActionButtonState, Project, User } from '@/types/dashboard';
 import type { AnimationStage } from '@/hooks/useContract';
-import { isGenerationCommand } from '@/utils/generationCommands';
+import type { ContractStatus } from '@/lib/api';
 import { MarkdownMessage } from '../chat/MarkdownMessage';
 
 interface ChatScreenProps {
@@ -46,7 +47,15 @@ interface ChatScreenProps {
   buttonState?: ActionButtonState;
   /** Derived animation stage from deriveUIFromStatus. */
   animationStage?: AnimationStage;
+  /** Live backend status — drives build/audit/deploy stage animations. */
+  contractStatus?: ContractStatus | null;
   onStartStep?: (step: 'build' | 'audit' | 'deploy') => Promise<void>;
+  /** PUT /code + auto-rebuild for user-edited contracts. */
+  onSaveCode?: (uid: string, code: string) => Promise<void>;
+  /** POST /regenerate with user feedback for paused/failed contracts. */
+  onRegenerateWithFeedback?: (uid: string, feedback: string) => Promise<void>;
+  /** POST /deploy retry — for contracts that built+audited OK but failed mid-deploy. */
+  onRetryDeploy?: (uid: string) => Promise<void>;
 }
 
 export default function ChatScreen({ 
@@ -75,11 +84,47 @@ export default function ChatScreen({
   generationAttemptFailed = 0,
   buttonState: buttonStateProp,
   animationStage = null,
+  contractStatus = null,
   onStartStep,
+  onSaveCode,
+  onRegenerateWithFeedback,
+  onRetryDeploy,
 }: ChatScreenProps) {
   const router = useRouter();
   const [inputValue, setInputValue] = useState('');
   const [mobileActiveTab, setMobileActiveTab] = useState<'chat' | 'code' | 'network'>('chat');
+  const [regenOpen, setRegenOpen] = useState(false);
+  const [retryingDeploy, setRetryingDeploy] = useState(false);
+  const isPaused = contractStatus?.phase === 'paused_degraded';
+  const isFailed = contractStatus?.phase === 'failed';
+  const canRegenerate =
+    !!currentProject?.uid && !!onRegenerateWithFeedback && (isPaused || isFailed);
+  // Failed-mid-deploy pattern: build + audit succeeded, no program_id was assigned,
+  // pipeline ended in failed phase. Backend's _rearm_failed_deploy_if_needed will
+  // reposition LangGraph at the deploy interrupt, so a plain POST /deploy retries it.
+  const canRetryDeploy =
+    !!currentProject?.uid &&
+    !!onRetryDeploy &&
+    isFailed &&
+    !!contractStatus?.build_ok &&
+    !!contractStatus?.audit_ok &&
+    !contractStatus?.program_id;
+  // Migration 0010: contract was deployed before the find_so fix and landed on
+  // the warm-seed shared address. Show a stronger banner that explains the
+  // situation; the redeploy uses the same handler as canRetryDeploy.
+  const requiresRedeploy =
+    !!currentProject?.uid &&
+    !!onRetryDeploy &&
+    !!contractStatus?.requires_redeploy;
+  const handleRetryDeployClick = async () => {
+    if (!currentProject?.uid || !onRetryDeploy || retryingDeploy) return;
+    setRetryingDeploy(true);
+    try {
+      await onRetryDeploy(currentProject.uid);
+    } finally {
+      setRetryingDeploy(false);
+    }
+  };
   const messagesEndRefDesktop = useRef<HTMLDivElement>(null);
   const messagesEndRefMobile = useRef<HTMLDivElement>(null);
   // Tracks the last project uid + API code seen by the load effect.
@@ -345,13 +390,6 @@ export default function ChatScreen({
     if (inputValue.trim()) {
       onSendMessage(inputValue.trim(), contractCode);
       setInputValue('');
-      
-      // Check generation commands and start animation
-      const isGenerationCmd = isGenerationCommand(inputValue);
-      
-      if (isGenerationCmd && (!contractCode || contractCode.trim().length === 0)) {
-        setIsGenerating(true);
-      }
     }
   };
 
@@ -424,13 +462,24 @@ export default function ChatScreen({
   };
 
   return (
-    <motion.div 
+    <motion.div
       className="flex flex-col w-full h-screen bg-[#0C0C0C]"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.5 }}
     >
+      <RegenerateFeedbackModal
+        open={regenOpen}
+        contractName={currentProject?.name ?? undefined}
+        pauseReport={contractStatus?.pause_report ?? null}
+        onClose={() => setRegenOpen(false)}
+        onSubmit={async (feedback) => {
+          if (currentProject?.uid && onRegenerateWithFeedback) {
+            await onRegenerateWithFeedback(currentProject.uid, feedback);
+          }
+        }}
+      />
       {/* Header */}
       <header className="h-[48px] border-b border-[#191919] flex items-center justify-between px-3 md:px-6 flex-shrink-0">
         <div className="flex items-center gap-8">
@@ -555,7 +604,7 @@ export default function ChatScreen({
                       : 'bg-[#191919] border border-[#333]'
                   }`}>
                     {message.isUser ? (
-                      <div className="text-white text-xs leading-relaxed whitespace-pre-wrap break-words">{message.content}</div>
+                      <div className="text-white text-xs leading-relaxed whitespace-pre-wrap break-words text-left">{message.content}</div>
                     ) : (
                       <MarkdownMessage content={message.content} />
                     )}
@@ -622,7 +671,65 @@ export default function ChatScreen({
             Smart Contract Preview
           </div>
         </div>
-        
+
+        {requiresRedeploy && (
+          <div className="mx-3 mb-2 p-2.5 rounded-md bg-rose-500/10 border border-rose-500/40 flex items-center justify-between gap-2">
+            <div className="text-[11px] text-rose-200/90 leading-snug">
+              <span className="font-semibold">Re-deploy required.</span>{' '}
+              This contract was deployed before a critical fix landed
+              {contractStatus?.stale_program_id ? (
+                <> — its previous program ID
+                  {' '}<code className="text-[10px] bg-rose-900/30 px-1 rounded">{contractStatus.stale_program_id.slice(0, 12)}…</code>{' '}
+                actually points to the warm-seed Hello-World binary, not your code.</>
+              ) : '.'}{' '}
+              Click Re-deploy to upload your real contract to a fresh program ID.
+            </div>
+            <button
+              type="button"
+              onClick={handleRetryDeployClick}
+              disabled={retryingDeploy}
+              className="flex-shrink-0 px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 hover:border-emerald-500/60 text-[10px] font-medium transition-colors disabled:opacity-60 disabled:cursor-wait"
+            >
+              {retryingDeploy ? 'Re-deploying…' : 'Re-deploy'}
+            </button>
+          </div>
+        )}
+        {canRegenerate && !requiresRedeploy && (
+          <div className="mx-3 mb-2 p-2.5 rounded-md bg-yellow-500/10 border border-yellow-500/30 flex items-center justify-between gap-2">
+            <div className="text-[11px] text-yellow-200/90 leading-snug">
+              {isPaused
+                ? 'Pipeline paused — auto-fix loop hit a limit.'
+                : canRetryDeploy
+                ? 'Build & audit passed, but deploy failed. You can retry deploy without regenerating.'
+                : 'Pipeline failed.'}{' '}
+              {contractStatus?.pause_report
+                ? contractStatus.pause_report
+                : canRetryDeploy
+                ? ''
+                : 'You can describe what to change and regenerate.'}
+            </div>
+            <div className="flex flex-shrink-0 gap-2">
+              {canRetryDeploy && (
+                <button
+                  type="button"
+                  onClick={handleRetryDeployClick}
+                  disabled={retryingDeploy}
+                  className="px-2.5 py-1 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30 hover:border-emerald-500/60 text-[10px] font-medium transition-colors disabled:opacity-60 disabled:cursor-wait"
+                >
+                  {retryingDeploy ? 'Retrying…' : 'Retry deploy'}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setRegenOpen(true)}
+                className="px-2.5 py-1 rounded-md bg-orange-500/20 text-orange-300 border border-orange-500/40 hover:bg-orange-500/30 hover:border-orange-500/60 text-[10px] font-medium transition-colors"
+              >
+                Regenerate with feedback
+              </button>
+            </div>
+          </div>
+        )}
+
             {/* Interactive Code Area - flex-1 to fill space */}
             <div className="flex-1 p-3 min-h-0">
             <InteractiveCodeEditor
@@ -633,10 +740,16 @@ export default function ChatScreen({
               isBuilding={isPipelineBuilding}
               isAuditing={isPipelineAuditing}
               isDeploying={isPipelineDeploying}
+              contractStatus={contractStatus}
               onGenerationComplete={handleGenerationComplete}
               onAddAIMessage={onAddAIMessage}
               placeholder="Paste your smart contract here or chat with AI to generate one..."
               useRealApi
+              onSaveCode={
+                currentProject?.uid && onSaveCode
+                  ? (newCode) => onSaveCode(currentProject.uid, newCode)
+                  : undefined
+              }
             />
         </div>
         
@@ -756,7 +869,7 @@ export default function ChatScreen({
                           : 'bg-[#191919] border border-[#333]'
                       }`}>
                         {message.isUser ? (
-                          <div className="text-white text-xs leading-relaxed whitespace-pre-wrap break-words">
+                          <div className="text-white text-xs leading-relaxed whitespace-pre-wrap break-words text-left">
                             {message.content}
                           </div>
                         ) : (
@@ -810,7 +923,41 @@ export default function ChatScreen({
                 Smart Contract Preview
               </div>
             </div>
-            
+
+            {canRegenerate && (
+              <div className="mx-2 mb-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/30 flex items-center justify-between gap-2">
+                <div className="text-[10px] text-yellow-200/90 leading-snug">
+                  {canRetryDeploy
+                    ? 'Deploy failed — build & audit OK.'
+                    : isPaused
+                    ? 'Paused'
+                    : 'Failed'}{' '}
+                  {contractStatus?.pause_report && !canRetryDeploy
+                    ? `— ${contractStatus.pause_report}`
+                    : ''}
+                </div>
+                <div className="flex flex-shrink-0 gap-1.5">
+                  {canRetryDeploy && (
+                    <button
+                      type="button"
+                      onClick={handleRetryDeployClick}
+                      disabled={retryingDeploy}
+                      className="px-2 py-1 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[9px] font-medium disabled:opacity-60 disabled:cursor-wait"
+                    >
+                      {retryingDeploy ? '…' : 'Retry deploy'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setRegenOpen(true)}
+                    className="px-2 py-1 rounded-md bg-orange-500/20 text-orange-300 border border-orange-500/40 text-[9px] font-medium"
+                  >
+                    Regenerate
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Interactive Code Area */}
             <div className="flex-1 p-2 min-h-0">
               <InteractiveCodeEditor
@@ -821,6 +968,12 @@ export default function ChatScreen({
                 isBuilding={isPipelineBuilding}
                 isAuditing={isPipelineAuditing}
                 isDeploying={isPipelineDeploying}
+                contractStatus={contractStatus}
+                onSaveCode={
+                  currentProject?.uid && onSaveCode
+                    ? (newCode) => onSaveCode(currentProject.uid, newCode)
+                    : undefined
+                }
                 onGenerationComplete={handleGenerationComplete}
                 onAddAIMessage={onAddAIMessage}
                 placeholder="Paste your smart contract here or chat with AI to generate one..."

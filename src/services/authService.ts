@@ -1,6 +1,6 @@
 'use client';
 
-import { apiClient, setTokens, clearTokens, getAccessToken } from '@/services/api';
+import { apiClient, setTokens, clearTokens, clearSessionStorage, getAccessToken } from '@/services/api';
 import type { AuthTokens, ChallengeResponse } from '@/lib/api';
 
 // ── Decode JWT payload (no library needed) ────────────────────────────────────
@@ -86,6 +86,8 @@ export async function logout(): Promise<void> {
     if (rt) await apiClient.authLogout(rt);
   } catch { /* best-effort */ } finally {
     clearTokens();
+    // Wipe per-wallet / per-contract caches so the next login starts clean.
+    clearSessionStorage();
   }
 }
 

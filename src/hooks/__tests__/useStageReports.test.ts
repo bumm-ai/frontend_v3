@@ -16,6 +16,7 @@
 
 import { describe, it, expect } from 'vitest';
 import type { ContractStatus } from '@/lib/api';
+import { humanizeErrorCodes } from '@/lib/errorTranslate';
 
 // ── Re-implement the core logic inline so we can test it without a DOM ────────
 // This mirrors the exact conditions inside useStageReports.ts.
@@ -46,7 +47,8 @@ function collectReports(transitions: StageReportInput[]): string[] {
       const attempt = curr.build_attempt ?? 0;
       const count = curr.build_errors_count ?? 0;
       const codes = (curr.top_error_codes ?? []).filter(Boolean);
-      const codesStr = codes.length > 0 ? ` (${codes.join(', ')})` : '';
+      const human = humanizeErrorCodes(codes);
+      const codesStr = human ? ` (${human})` : '';
       emit(
         `build_fail:${attempt}`,
         `**Build attempt ${attempt} failed** — ${count} compiler error${count === 1 ? '' : 's'}${codesStr}. Attempting auto-fix…`,
@@ -126,14 +128,16 @@ describe('useStageReports — build attempt failure', () => {
     expect(msgs[0]).toContain('3 compiler errors');
   });
 
-  it('includes error codes when present', () => {
+  it('includes humanized error summaries when codes are present', () => {
     const msgs = collectReports([
       {
         prev: s({ build_attempt: 0 }),
         curr: s({ build_attempt: 1, build_errors_count: 2, top_error_codes: ['E0432', 'E0277'] }),
       },
     ]);
-    expect(msgs[0]).toContain('E0432, E0277');
+    expect(msgs[0]).toContain('Unresolved import');
+    expect(msgs[0]).toContain('required trait');
+    expect(msgs[0]).not.toMatch(/E0432|E0277/);
   });
 
   it('uses singular "error" for exactly one error', () => {

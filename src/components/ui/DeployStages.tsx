@@ -1,217 +1,134 @@
 'use client';
 
-import { motion, AnimatePresence } from 'framer-motion';
-import { CheckCircle, Upload, Network, Shield, Rocket, Zap } from 'lucide-react';
-import { useState, useEffect, useRef } from 'react';
-import { DancingDotsLoader } from './DancingDotsLoader';
+import { Upload, CheckCircle, Hourglass, Radio, Coins } from 'lucide-react';
+import type { ContractStatus } from '@/lib/api';
+import {
+  PipelineStagesCard,
+  type StageView,
+} from './PipelineStagesCard';
+import { usePhaseTimer, pickSubStepIndex } from '@/hooks/usePhaseTimer';
 
-interface DeployStage {
-  id: string;
-  title: string;
-  description: string;
-  icon: React.ComponentType<{ className?: string }>;
-  duration: number;
+interface DerivedDeployStages {
+  stages: StageView[];
+  currentId: string | null;
+  completedIds: string[];
+  footer: string;
 }
 
-const deployStages: DeployStage[] = [
-  {
-    id: 'verification',
-    title: 'Verification',
-    description: 'Verifying contract integrity and dependencies',
-    icon: Shield,
-    duration: 2000
-  },
-  {
-    id: 'deployment-progress',
-    title: 'Deployment Progress',
-    description: 'Preparing deployment environment',
-    icon: Rocket,
-    duration: 1800
-  },
-  {
-    id: 'contract-validation',
-    title: 'Contract Validation',
-    description: 'Validating contract structure and logic',
-    icon: CheckCircle,
-    duration: 2200
-  },
-  {
-    id: 'compilation',
-    title: 'Compilation',
-    description: 'Compiling contract for deployment',
-    icon: Zap,
-    duration: 2000
-  },
-  {
+/**
+ * Map backend status → deploy-stage view model.
+ *
+ * Backend sets `state.phase = DEPLOYING` only on node return, not at
+ * start, so we drive cosmetic sub-steps off `elapsedSeconds` since the
+ * deploy card mounted. `program_id` arriving in status is the only
+ * reliable "actually finished" signal.
+ *
+ * Cosmetic timeline:
+ *   0–4s   → Preparing deploy (size + fee estimate)
+ *   4–10s  → Checking on-chain balance (airdrop fallback if low)
+ *   10–25s → Uploading bytecode
+ *   25s+   → Awaiting cluster confirmation
+ */
+export function deriveDeployStages(
+  status: ContractStatus | null,
+  elapsedSeconds: number = 0,
+): DerivedDeployStages {
+  const programId = status?.program_id ?? null;
+  const deployed = !!programId;
+
+  const preparing: StageView = {
+    id: 'preparing',
+    title: 'Preparing deploy',
+    subtitle: 'Computing program size and estimating SOL fee',
+    icon: Hourglass,
+  };
+
+  const balance: StageView = {
+    id: 'balance',
+    title: 'Checking on-chain balance',
+    subtitle: 'Falling back to devnet airdrop if balance is low',
+    icon: Coins,
+  };
+
+  const uploading: StageView = {
     id: 'uploading',
-    title: 'Uploading to Network',
-    description: 'Uploading contract to Solana network',
+    title: 'Uploading bytecode',
+    subtitle: 'Streaming program .so to the cluster RPC',
     icon: Upload,
-    duration: 2400
-  },
-  {
-    id: 'deployment-verification',
-    title: 'Deployment Verification',
-    description: 'Verifying successful deployment',
-    icon: Network,
-    duration: 1800
+  };
+
+  const confirming: StageView = {
+    id: 'confirming',
+    title: 'Awaiting cluster confirmation',
+    subtitle: 'Validators picking up the deploy transaction',
+    icon: Radio,
+  };
+
+  const confirmed: StageView = {
+    id: 'confirmed',
+    title: 'Deployed',
+    subtitle: programId
+      ? `Program ID: ${programId}`
+      : 'Live on Solana devnet',
+    icon: CheckCircle,
+  };
+
+  const stages: StageView[] = [preparing, balance, uploading, confirming, confirmed];
+
+  let currentId: string;
+  const completedIds: string[] = [];
+
+  if (deployed) {
+    completedIds.push('preparing', 'balance', 'uploading', 'confirming');
+    currentId = 'confirmed';
+  } else {
+    // ── Mount-elapsed-driven progression — backend doesn't transition
+    // phase to DEPLOYING until the deploy node returns. ──
+    const subSteps = ['preparing', 'balance', 'uploading', 'confirming'] as const;
+    const idx = Math.min(
+      subSteps.length - 1,
+      pickSubStepIndex(elapsedSeconds, [4, 10, 25]),
+    );
+    for (let i = 0; i < idx; i++) completedIds.push(subSteps[i]);
+    currentId = subSteps[idx];
   }
-];
+
+  let footer: string;
+  if (deployed) footer = 'Deployment complete';
+  else if (elapsedSeconds > 25) footer = 'Awaiting cluster confirmation…';
+  else if (elapsedSeconds > 10) footer = 'Uploading bytecode…';
+  else if (elapsedSeconds > 4) footer = 'Checking on-chain balance…';
+  else footer = 'Preparing deploy…';
+
+  return { stages, currentId, completedIds, footer };
+}
 
 interface DeployStagesProps {
   isDeploying: boolean;
-  onComplete: () => void;
-  onAddAIMessage: (message: string) => void;
+  status: ContractStatus | null;
 }
 
-export const DeployStages = ({ isDeploying, onComplete, onAddAIMessage }: DeployStagesProps) => {
-  const [currentStageIndex, setCurrentStageIndex] = useState(0);
-  const [completedStages, setCompletedStages] = useState<string[]>([]);
-  const startedRef = useRef(false);
-  const onCompleteRef = useRef(onComplete);
-  onCompleteRef.current = onComplete;
-
-  useEffect(() => {
-    if (isDeploying) {
-      startedRef.current = true;
-      return;
-    }
-    if (!startedRef.current) return;
-    startedRef.current = false;
-    setCompletedStages(deployStages.map(s => s.id));
-    onCompleteRef.current();
-  }, [isDeploying]);
-
-  useEffect(() => {
-    if (!isDeploying) {
-      setCurrentStageIndex(0);
-      setCompletedStages([]);
-      return;
-    }
-
-    if (currentStageIndex >= deployStages.length - 1) return;
-
-    const currentStage = deployStages[currentStageIndex];
-    const timeoutId = setTimeout(() => {
-      setCompletedStages(prev => [...prev, currentStage.id]);
-      setCurrentStageIndex(prev => prev + 1);
-    }, currentStage.duration);
-
-    return () => clearTimeout(timeoutId);
-  }, [isDeploying, currentStageIndex]);
-
+export const DeployStages = ({ isDeploying, status }: DeployStagesProps) => {
+  const timerKey = status?.bumm_uid
+    ? `deploy:${status.bumm_uid}`
+    : 'deploy:demo';
+  const { phaseElapsedSeconds: elapsedSeconds } = usePhaseTimer(
+    isDeploying ? 'deploy-active' : null,
+    timerKey,
+  );
   if (!isDeploying) return null;
-
-  const currentStage = deployStages[currentStageIndex];
-
+  const { stages, currentId, completedIds, footer } = deriveDeployStages(
+    status,
+    elapsedSeconds,
+  );
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
-      className="flex gap-3 h-full"
-    >
-      <div className="w-8 h-8 rounded-full bg-[#191919] flex items-center justify-center">
-        <motion.div
-          key={currentStage?.id}
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          className="text-orange-600/90"
-        >
-          {currentStage && <currentStage.icon className="w-4 h-4" />}
-        </motion.div>
-      </div>
-      
-      <div className="flex-1 flex flex-col">
-        <div className="border border-dashed border-orange-600/60 rounded-lg p-6 bg-[#191919] flex-1 flex flex-col overflow-y-auto">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-4">
-            <div className="text-white font-medium text-sm">
-              Deploy Smart Contract
-            </div>
-            <DancingDotsLoader />
-          </div>
-
-          {/* Current Stage */}
-          <AnimatePresence mode="wait">
-            {currentStage && (
-              <motion.div
-                key={currentStage.id}
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                transition={{ duration: 0.3, ease: "easeInOut" }}
-                className="mb-6"
-              >
-                <div className="flex items-center gap-2 mb-2">
-                  <currentStage.icon className="w-4 h-4 text-orange-600/90" />
-                  <div className="text-orange-500/90 font-medium text-sm">
-                    {currentStage.title}
-                  </div>
-                </div>
-                <div className="text-gray-400 text-xs">
-                  {currentStage.description}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Progress Stages */}
-          <div className="space-y-2 flex-1">
-            {deployStages.map((stage, index) => {
-              const isCompleted = completedStages.includes(stage.id);
-              const isCurrent = currentStageIndex === index;
-
-              return (
-                <motion.div
-                  key={stage.id}
-                  className="flex items-center gap-3"
-                  initial={{ opacity: 0.3 }}
-                  animate={{ 
-                    opacity: isCompleted ? 1 : isCurrent ? 0.8 : 0.3,
-                    scale: isCurrent ? 1.02 : 1
-                  }}
-                  transition={{ duration: 0.4, ease: "easeInOut" }}
-                >
-                  <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
-                    isCompleted 
-                      ? 'bg-green-600/80' 
-                      : isCurrent 
-                        ? 'bg-orange-600/80' 
-                        : 'bg-gray-600'
-                  }`}>
-                    {isCompleted ? (
-                      <CheckCircle className="w-3 h-3 text-white" />
-                    ) : isCurrent ? (
-                      <motion.div
-                        className="w-2 h-2 bg-white rounded-full"
-                        animate={{ scale: [1, 1.2, 1] }}
-                        transition={{ duration: 1, repeat: Infinity }}
-                      />
-                    ) : (
-                      <div className="w-2 h-2 bg-gray-400 rounded-full" />
-                    )}
-                  </div>
-                  
-                  <div className={`text-xs ${
-                    isCompleted 
-                      ? 'text-green-500/90' 
-                      : isCurrent 
-                        ? 'text-orange-500/90' 
-                        : 'text-gray-500'
-                  }`}>
-                    {stage.title}
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-        </div>
-        
-        <div className="text-xs text-[#666] mt-1 flex-shrink-0">
-          Deploying to Solana devnet...
-        </div>
-      </div>
-    </motion.div>
+    <PipelineStagesCard
+      headerLabel="Deploy Contract"
+      stages={stages}
+      currentId={currentId}
+      completedIds={completedIds}
+      footer={footer}
+      timerKey={timerKey}
+    />
   );
 };
