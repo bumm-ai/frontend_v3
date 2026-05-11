@@ -305,8 +305,11 @@ jspm_packages/
 out/
 
 # Production build
-build/
-dist/
+# NOTE: leading slash anchors to repo root — without it `build/` matches
+# ANY nested directory named build, including src/components/build/ which
+# previously caused BuildLogStream.tsx to be silently untracked.
+/build/
+/dist/
 
 # Vercel
 .vercel
