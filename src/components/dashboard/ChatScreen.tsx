@@ -16,6 +16,7 @@ import { ChatMessage, CodeSource, ActionButtonState, Project, User } from '@/typ
 import type { AnimationStage } from '@/hooks/useContract';
 import type { ContractStatus } from '@/lib/api';
 import { MarkdownMessage } from '../chat/MarkdownMessage';
+import { ProposedActionCard } from '../ui/ProposedActionCard';
 
 interface ChatScreenProps {
   messages: ChatMessage[];
@@ -56,6 +57,18 @@ interface ChatScreenProps {
   onRegenerateWithFeedback?: (uid: string, feedback: string) => Promise<void>;
   /** POST /deploy retry — for contracts that built+audited OK but failed mid-deploy. */
   onRetryDeploy?: (uid: string) => Promise<void>;
+  /** Apply an auto-regen proposal attached to a chat message (Tier 2). */
+  onApplyProposal?: (messageId: string, logUid: string) => Promise<void>;
+  /** Dismiss an auto-regen proposal (telemetry only, no pipeline effect). */
+  onDeclineProposal?: (messageId: string, logUid: string) => Promise<void>;
+  /** Notified when the inline code editor swaps between dirty and clean.
+   *  Dashboard uses this to disable Build/Audit/Deploy so the user can't
+   *  trigger a pipeline run on stale persisted code. */
+  onEditorDirtyChange?: (uid: string, dirty: boolean) => void;
+  /** True when the inline code editor has unsaved user edits for the
+   *  currently selected project. Disables the main action button and shows
+   *  a banner pointing the user at the editor's "Save & rebuild" button. */
+  editorDirty?: boolean;
 }
 
 export default function ChatScreen({ 
@@ -89,6 +102,10 @@ export default function ChatScreen({
   onSaveCode,
   onRegenerateWithFeedback,
   onRetryDeploy,
+  onApplyProposal,
+  onDeclineProposal,
+  onEditorDirtyChange,
+  editorDirty = false,
 }: ChatScreenProps) {
   const router = useRouter();
   const [inputValue, setInputValue] = useState('');
@@ -430,6 +447,19 @@ export default function ChatScreen({
       return;
     }
 
+    // Belt-and-suspenders gate: button is already visually disabled when the
+    // editor is dirty, but if a click somehow slips through (keyboard nav,
+    // browser quirk) we still must not let the user trigger a build that
+    // would run on the OLD persisted code while their textarea holds
+    // unsaved edits. The "Save & rebuild" button inside InteractiveCodeEditor
+    // is the only correct way out of the dirty state.
+    if (editorDirty) {
+      onAddAIMessage?.(
+        'You have unsaved code changes. Click "Save & rebuild" in the editor to apply them before running the pipeline.',
+      );
+      return;
+    }
+
     // When a real backend project exists, navigate to its step-mode page for
     // Build → Audit → Deploy (the /contracts/[uid] page handles all three steps inline).
     if (bummUid && onStartStep) {
@@ -614,9 +644,16 @@ export default function ChatScreen({
                       </div>
                     )}
                   </div>
+                  {!message.isUser && message.proposedAction && onApplyProposal && onDeclineProposal && (
+                    <ProposedActionCard
+                      action={message.proposedAction}
+                      onApply={() => onApplyProposal(message.id, message.proposedAction!.log_uid)}
+                      onDecline={() => onDeclineProposal(message.id, message.proposedAction!.log_uid)}
+                    />
+                  )}
                   <div className="text-xs text-[#666] mt-0.5">
-                    {message.timestamp instanceof Date 
-                      ? message.timestamp.toLocaleTimeString() 
+                    {message.timestamp instanceof Date
+                      ? message.timestamp.toLocaleTimeString()
                       : new Date(message.timestamp).toLocaleTimeString()
                     }
                   </div>
@@ -750,6 +787,11 @@ export default function ChatScreen({
                   ? (newCode) => onSaveCode(currentProject.uid, newCode)
                   : undefined
               }
+              onDirtyChange={
+                currentProject?.uid && onEditorDirtyChange
+                  ? (dirty) => onEditorDirtyChange(currentProject.uid, dirty)
+                  : undefined
+              }
             />
         </div>
         
@@ -782,11 +824,19 @@ export default function ChatScreen({
             )}
 
             {/* Smart Action Button */}
-            <div className="ml-4">
-              <SmartActionButton 
+            <div className="ml-4 flex flex-col items-end gap-1">
+              {editorDirty && (
+                <span
+                  className="text-[9px] text-orange-300/90 px-2 py-0.5 rounded bg-orange-500/10 border border-orange-500/30 whitespace-nowrap"
+                  title="Persisted code differs from editor — pipeline would run on stale code"
+                >
+                  Unsaved code — click &ldquo;Save &amp; rebuild&rdquo;
+                </span>
+              )}
+              <SmartActionButton
                 state={effectiveButtonState}
                 onClick={handleActionClick}
-                disabled={isBuilding}
+                disabled={isBuilding || editorDirty}
                 isDeployed={isContractDeployed}
                 contractAddress={deployedContractAddress}
                 isFrozen={contractIsFrozen}
@@ -879,6 +929,13 @@ export default function ChatScreen({
                           {message.timestamp.toLocaleTimeString()}
                         </div>
                       </div>
+                      {!message.isUser && message.proposedAction && onApplyProposal && onDeclineProposal && (
+                        <ProposedActionCard
+                          action={message.proposedAction}
+                          onApply={() => onApplyProposal(message.id, message.proposedAction!.log_uid)}
+                          onDecline={() => onDeclineProposal(message.id, message.proposedAction!.log_uid)}
+                        />
+                      )}
                     </div>
                   </motion.div>
                 ))}
@@ -974,6 +1031,11 @@ export default function ChatScreen({
                     ? (newCode) => onSaveCode(currentProject.uid, newCode)
                     : undefined
                 }
+                onDirtyChange={
+                  currentProject?.uid && onEditorDirtyChange
+                    ? (dirty) => onEditorDirtyChange(currentProject.uid, dirty)
+                    : undefined
+                }
                 onGenerationComplete={handleGenerationComplete}
                 onAddAIMessage={onAddAIMessage}
                 placeholder="Paste your smart contract here or chat with AI to generate one..."
@@ -996,11 +1058,19 @@ export default function ChatScreen({
                   )}
                 </div>
                 
-                <div className="ml-4">
-                  <SmartActionButton 
+                <div className="ml-4 flex flex-col items-end gap-1">
+                  {editorDirty && (
+                    <span
+                      className="text-[8px] text-orange-300/90 px-2 py-0.5 rounded bg-orange-500/10 border border-orange-500/30 whitespace-nowrap"
+                      title="Persisted code differs from editor — pipeline would run on stale code"
+                    >
+                      Unsaved — tap &ldquo;Save &amp; rebuild&rdquo;
+                    </span>
+                  )}
+                  <SmartActionButton
                     state={effectiveButtonState}
                     onClick={handleActionClick}
-                    disabled={isBuilding}
+                    disabled={isBuilding || editorDirty}
                     isDeployed={isContractDeployed}
                     contractAddress={deployedContractAddress}
                     isFrozen={contractIsFrozen}

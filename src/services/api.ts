@@ -143,6 +143,39 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Apply a previously-proposed auto-regenerate action (Tier 2 chat flow).
+   *
+   * Returns the same shape as `regenerateContract` because /apply delegates
+   * to the existing regenerate route; callers can reuse the same status
+   * polling and progress-card logic that the manual modal flow uses.
+   */
+  async applyChatProposal(contractUid: string, logUid: string): Promise<{
+    uid: string;
+    phase: string;
+    code_version?: number;
+  }> {
+    return apiFetch(ENDPOINTS.CHAT_APPLY(contractUid), {
+      method: 'POST',
+      body: JSON.stringify({ log_uid: logUid }),
+    });
+  }
+
+  /**
+   * Mark a proposal as declined. Pure telemetry — no pipeline side effects.
+   * Idempotent on already-finalized rows so the UI does not need extra
+   * guard logic around double-clicks.
+   */
+  async declineChatProposal(contractUid: string, logUid: string): Promise<{
+    status: string;
+    log_uid: string;
+  }> {
+    return apiFetch(ENDPOINTS.CHAT_DECLINE(contractUid), {
+      method: 'POST',
+      body: JSON.stringify({ log_uid: logUid }),
+    });
+  }
+
   // ── Contracts ─────────────────────────────────────────────────────────────
 
   async createContract(req: ContractRequest): Promise<ContractCreated> {

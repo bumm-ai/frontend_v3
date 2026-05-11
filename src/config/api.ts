@@ -21,6 +21,8 @@ export const ENDPOINTS = {
   AUTH_REFRESH:     '/api/v1/auth/refresh',
   AUTH_LOGOUT:      '/api/v1/auth/logout',
   CHAT:             '/api/v1/chat',
+  CHAT_APPLY:       (uid: string) => `/api/v1/chat/${uid}/apply`,
+  CHAT_DECLINE:     (uid: string) => `/api/v1/chat/${uid}/decline`,
   CONTRACTS:        '/api/v1/contracts',
   CONTRACT_STATUS:  (uid: string) => `/api/v1/contracts/${uid}/status`,
   CONTRACT_CODE:    (uid: string) => `/api/v1/contracts/${uid}/code`,

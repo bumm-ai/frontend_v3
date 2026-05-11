@@ -31,6 +31,12 @@ interface InteractiveCodeEditorProps {
   /** When provided, shows "Save & rebuild" button while user-edited code
    *  diverges from `initialCode`. Parent calls PUT /code + triggerBuild. */
   onSaveCode?: (code: string) => Promise<void>;
+  /** Notifies parent whenever the editor switches between "dirty" (user has
+   *  unsaved edits) and "clean" states. Parent uses this to disable the
+   *  toolbar Build/Audit/Deploy buttons so the user can't trigger a pipeline
+   *  run on the stale persisted code — they must click "Save & rebuild"
+   *  first. Optional: components that don't gate workflow can ignore it. */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 export const InteractiveCodeEditor = ({
@@ -49,6 +55,7 @@ export const InteractiveCodeEditor = ({
   isAutoDemo = false,
   useRealApi = false,
   onSaveCode,
+  onDirtyChange,
 }: InteractiveCodeEditorProps) => {
   const addAIMessage = onAddAIMessage ?? (() => {});
   const [code, setCode] = useState(initialCode);
@@ -62,6 +69,16 @@ export const InteractiveCodeEditor = ({
     source === 'user-input' &&
     code.trim() !== '' &&
     code !== initialCode;
+
+  // Push the dirty flag up so the parent (Dashboard) can disable the toolbar
+  // Build/Audit/Deploy buttons until the user clicks "Save & rebuild".
+  // Cleanup on unmount/project-switch sends false so a stale "true" never
+  // sticks after the editor leaves the screen.
+  useEffect(() => {
+    if (!onDirtyChange) return;
+    onDirtyChange(hasUnsavedEdits);
+    return () => onDirtyChange(false);
+  }, [hasUnsavedEdits, onDirtyChange]);
 
   const handleSaveAndRebuild = async () => {
     if (!onSaveCode || isSaving) return;

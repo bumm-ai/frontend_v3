@@ -199,6 +199,25 @@ export default function Dashboard() {
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
   const [pasteModalInitialCode, setPasteModalInitialCode] = useState<string | undefined>(undefined);
   const [rollbackProject, setRollbackProject] = useState<Project | null>(null);
+  // Per-project flag: true when the inline code editor holds user edits that
+  // haven't been PUT'd back to /code yet. While true, the main Build/Audit/
+  // Deploy action is gated — running the pipeline would operate on the OLD
+  // persisted code, silently discarding the user's textarea changes.
+  // Editor unmount (on project switch) flushes false, so stale entries
+  // for closed projects can't trap a future click.
+  const [editorDirtyByUid, setEditorDirtyByUid] = useState<Record<string, boolean>>({});
+  const handleEditorDirtyChange = useCallback((uid: string, dirty: boolean) => {
+    setEditorDirtyByUid(prev => {
+      if (!dirty) {
+        if (!(uid in prev)) return prev;
+        const next = { ...prev };
+        delete next[uid];
+        return next;
+      }
+      if (prev[uid] === true) return prev;
+      return { ...prev, [uid]: true };
+    });
+  }, []);
   // Generation animation is derived from backend status (phase + next_step),
   // not from a client-side session flag. See deriveAnimationStage.
 
@@ -935,14 +954,24 @@ export default function Dashboard() {
     try {
       const chatResp = await apiClient.chatMessage(history, existingContractUid);
 
-      // Replace typing indicator with actual AI response
+      // Replace typing indicator with actual AI response. When the backend
+      // attached a `proposed_action` block (Tier 2 auto-regen flow), surface
+      // it on the message so ChatScreen renders the inline action card.
+      const aiMessageId = typingId;
       setMessages(prev =>
         prev.map(m =>
           m.id === typingId
-            ? { ...m, content: chatResp.message }
+            ? {
+                ...m,
+                content: chatResp.message,
+                proposedAction: chatResp.proposed_action
+                  ? { ...chatResp.proposed_action, status: 'proposed' }
+                  : undefined,
+              }
             : m
         )
       );
+      void aiMessageId;
 
       // 5. If AI says ready → launch the pipeline automatically.
       // Guard: ONLY fire for blank new-contract flow. If the user is viewing an
@@ -1292,6 +1321,17 @@ export default function Dashboard() {
         return;
       }
 
+      // Safety net: ChatScreen already disables the action button when the
+      // editor is dirty, but if anything bypasses the visual gate we still
+      // refuse to fire build/audit/deploy on the stale persisted code. The
+      // user has to clear the dirty state via "Save & rebuild" first.
+      if (uid && editorDirtyByUid[uid]) {
+        addAIMessage(
+          'You have unsaved code changes. Click "Save & rebuild" in the editor first — otherwise the pipeline would run on the old persisted code.',
+        );
+        return;
+      }
+
       // Immediately show loader — no waiting for WS heartbeat
       setPendingStep({ projectId: currentProject!.uid, step });
       // Ensure WS is connected to this project
@@ -1309,7 +1349,11 @@ export default function Dashboard() {
         addAIMessage(`Failed to start ${step}: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
     },
-    [currentProject],
+    // editorDirtyByUid is read inside the callback; include it so a fresh
+    // dirty flip takes effect on the very next click without waiting for
+    // currentProject to also change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentProject, editorDirtyByUid],
   );
 
   // ── Code-edit + regenerate flows ──────────────────────────────────────────
@@ -1395,6 +1439,79 @@ export default function Dashboard() {
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
+  );
+
+  /**
+   * Flip the `proposedAction.status` on a specific chat message so the inline
+   * card reflects the in-flight lifecycle. Lives outside the apply/decline
+   * handlers so both can share the same setter and so the optimistic update
+   * can be rolled back from a single place on error.
+   */
+  const updateProposalStatus = useCallback(
+    (
+      messageId: string,
+      status: 'applying' | 'applied' | 'declined' | 'error',
+      errorMessage?: string,
+    ) => {
+      setMessages(prev =>
+        prev.map(m =>
+          m.id === messageId && m.proposedAction
+            ? { ...m, proposedAction: { ...m.proposedAction, status, errorMessage } }
+            : m,
+        ),
+      );
+    },
+    [setMessages],
+  );
+
+  const handleApplyProposal = useCallback(
+    async (messageId: string, logUid: string) => {
+      const uid = currentProjectRef.current?.bummUid ?? currentProjectRef.current?.uid;
+      if (!uid) return;
+      updateProposalStatus(messageId, 'applying');
+      try {
+        await tryRefresh();
+        const result = await apiClient.applyChatProposal(uid, logUid);
+        updateProposalStatus(messageId, 'applied');
+        // /apply already wired the regenerate; kick off the build so the user
+        // sees the next pipeline phase animate without a manual click.
+        setActiveContractUid(uid);
+        try {
+          await apiClient.triggerBuild(uid);
+        } catch (err) {
+          addAIMessageForProject(
+            uid,
+            `Applied your suggestions but build trigger failed: ${
+              err instanceof Error ? err.message : 'Unknown error'
+            }. Press Build to retry.`,
+          );
+        }
+        void result;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
+        updateProposalStatus(messageId, 'error', msg);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [updateProposalStatus],
+  );
+
+  const handleDeclineProposal = useCallback(
+    async (messageId: string, logUid: string) => {
+      const uid = currentProjectRef.current?.bummUid ?? currentProjectRef.current?.uid;
+      if (!uid) return;
+      // Optimistic — telemetry-only endpoint, no need to wait before the UI
+      // hides the card.
+      updateProposalStatus(messageId, 'declined');
+      try {
+        await apiClient.declineChatProposal(uid, logUid);
+      } catch (err) {
+        // Don't bother the user — decline is telemetry. Just log.
+        console.warn('declineChatProposal failed:', err);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [updateProposalStatus],
   );
 
   // ── Computed UI state (no useState — pure derivation every render) ────────
@@ -1645,6 +1762,12 @@ export default function Dashboard() {
             onSaveCode={handleSaveCode}
             onRegenerateWithFeedback={handleRegenerateWithFeedback}
             onRetryDeploy={handleRetryDeploy}
+            onApplyProposal={handleApplyProposal}
+            onDeclineProposal={handleDeclineProposal}
+            onEditorDirtyChange={handleEditorDirtyChange}
+            editorDirty={
+              !!(currentProject && editorDirtyByUid[currentProject.uid])
+            }
           />
         );
       

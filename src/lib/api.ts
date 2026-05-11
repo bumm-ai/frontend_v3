@@ -117,6 +117,8 @@ export interface PurchaseResponse {
 export interface ChatMessagePayload {
   role: 'user' | 'assistant';
   content: string;
+  /** Client-generated id so /apply can reference the exact AI bubble. */
+  message_id?: string;
 }
 
 export interface ChatRequest {
@@ -125,10 +127,28 @@ export interface ChatRequest {
   contract_uid?: string;
 }
 
+/**
+ * Auto-regenerate proposal attached by the backend when the AI classified the
+ * user's latest message as a regeneration request with sufficient confidence.
+ * Rendered as an inline card with [Apply] / [Refine] / [Cancel] buttons.
+ */
+export interface ProposedAction {
+  type: 'regenerate';
+  /** Short one-line description shown in the card body. */
+  summary: string;
+  /** Verbatim feedback that would be sent to /regenerate on Apply. */
+  feedback: string;
+  /** Classifier confidence (0.0-1.0). */
+  confidence: number;
+  /** uid of the auto_regenerate_log row — pass back to /apply or /decline. */
+  log_uid: string;
+}
+
 export interface ChatResponse {
   message: string;           // AI reply to display
   ready: boolean;            // true → enriched_prompt is available
   enriched_prompt?: string;  // detailed spec for pipeline generation
+  proposed_action?: ProposedAction | null;
 }
 
 // ── Contract List ────────────────────────────────────────────────────────────

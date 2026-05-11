@@ -22,6 +22,22 @@ export interface Project {
   isHidden?: boolean;
 }
 
+/**
+ * Inline auto-regenerate proposal attached to an AI chat bubble (Tier 2).
+ * When present, ChatScreen renders a ProposedActionCard underneath the bubble
+ * with Apply / Decline buttons that hit /chat/{uid}/apply and /chat/{uid}/decline.
+ */
+export interface ProposedAction {
+  type: 'regenerate';
+  summary: string;
+  feedback: string;
+  confidence: number;
+  log_uid: string;
+  /** Local lifecycle — flipped optimistically when Apply / Decline succeeds. */
+  status?: 'proposed' | 'applying' | 'applied' | 'declined' | 'error';
+  errorMessage?: string;
+}
+
 export interface ChatMessage {
   id: string;
   content: string;
@@ -31,6 +47,8 @@ export interface ChatMessage {
   // Project relationship
   projectUid?: string;
   taskType?: 'generate' | 'audit' | 'build' | 'deploy';
+  /** Backend-attached auto-regen proposal (only on AI messages). */
+  proposedAction?: ProposedAction;
 }
 
 export type CodeSource = 'empty' | 'user-input' | 'ai-generated';
