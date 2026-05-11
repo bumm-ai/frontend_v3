@@ -1,12 +1,15 @@
 // API configuration — Bumm AI Backend v3
-// REST goes through the Next.js proxy at /api/backend/* (avoids CORS).
+// REST: when NEXT_PUBLIC_API_URL is set, calls go DIRECT to the backend
+// (CORS-allowed). Without it, falls back to the Next.js proxy at /api/backend/*.
 // WebSocket connects DIRECTLY to WS_BASE (proxies don't support WS upgrade).
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 export const WS_BASE  = process.env.NEXT_PUBLIC_WS_URL  ?? 'ws://localhost:8080';
 
-// Browser-facing base for REST calls through Next.js proxy
-export const API_PROXY = '/api/backend';
+// Direct-to-backend mode: set NEXT_PUBLIC_API_URL=https://api.bumm.io on Vercel
+// to skip the Next.js proxy. Backend must include the frontend origin in
+// FRONTEND_URL (comma-separated list) so CORS allows the call.
+export const API_PROXY = process.env.NEXT_PUBLIC_API_URL ?? '/api/backend';
 
 // Backward-compatible alias used by legacy code
 export const API_BASE_URL = API_PROXY;
