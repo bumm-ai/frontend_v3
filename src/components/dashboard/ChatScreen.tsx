@@ -792,6 +792,10 @@ export default function ChatScreen({
                   ? (dirty) => onEditorDirtyChange(currentProject.uid, dirty)
                   : undefined
               }
+              deployedReadOnly={
+                !!contractStatus?.program_id && !contractStatus?.requires_redeploy
+              }
+              deployedProgramId={contractStatus?.program_id ?? null}
             />
         </div>
         
@@ -1036,6 +1040,10 @@ export default function ChatScreen({
                     ? (dirty) => onEditorDirtyChange(currentProject.uid, dirty)
                     : undefined
                 }
+                deployedReadOnly={
+                  !!contractStatus?.program_id && !contractStatus?.requires_redeploy
+                }
+                deployedProgramId={contractStatus?.program_id ?? null}
                 onGenerationComplete={handleGenerationComplete}
                 onAddAIMessage={onAddAIMessage}
                 placeholder="Paste your smart contract here or chat with AI to generate one..."

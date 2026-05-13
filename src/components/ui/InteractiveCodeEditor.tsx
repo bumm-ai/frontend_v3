@@ -37,6 +37,15 @@ interface InteractiveCodeEditorProps {
    *  run on the stale persisted code — they must click "Save & rebuild"
    *  first. Optional: components that don't gate workflow can ignore it. */
   onDirtyChange?: (dirty: boolean) => void;
+  /** True when the contract is already deployed (phase=done + program_id).
+   *  Edits via PUT /code are rejected with 409 by the backend in this state
+   *  because the deploy node would mint a new program at a different address.
+   *  The editor goes read-only with an explanatory banner pointing the user
+   *  at the Upgrade flow (when Tier 3 lands) or the Fork action. */
+  deployedReadOnly?: boolean;
+  /** Program ID of the deployed contract — shown verbatim in the read-only
+   *  banner so the user can verify they're looking at the right program. */
+  deployedProgramId?: string | null;
 }
 
 export const InteractiveCodeEditor = ({
@@ -56,6 +65,8 @@ export const InteractiveCodeEditor = ({
   useRealApi = false,
   onSaveCode,
   onDirtyChange,
+  deployedReadOnly = false,
+  deployedProgramId = null,
 }: InteractiveCodeEditorProps) => {
   const addAIMessage = onAddAIMessage ?? (() => {});
   const [code, setCode] = useState(initialCode);
@@ -294,11 +305,37 @@ export const InteractiveCodeEditor = ({
             <div className="text-gray-400 text-xs p-3 pb-2 border-b border-[#333] flex-shrink-0">
               {`// ${source === 'user-input' ? 'Your Smart Contract' : 'Generated Smart Contract'}`}
             </div>
-            <div 
-              className="w-full h-full p-3 cursor-text overflow-y-auto bg-[#0a0a0a] flex flex-col code-editor"
-              onClick={() => !isEditing && setIsEditing(true)}
+            {/* U1 — read-only banner for deployed contracts.
+                Edits via PUT /code are 409'd server-side; here we make that
+                visible upfront so the user doesn't even try. The Upgrade flow
+                (Tier 3) will replace this banner with action buttons once on-
+                chain operations land. */}
+            {deployedReadOnly && (
+              <div className="mx-3 mt-2 mb-1 flex-shrink-0 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-200">
+                <div className="font-semibold text-emerald-300">
+                  Deployed — read-only
+                </div>
+                <div className="mt-0.5 text-emerald-100/90">
+                  This contract is live at{' '}
+                  {deployedProgramId ? (
+                    <code className="bg-emerald-500/15 px-1 py-px rounded text-[10px]">
+                      {deployedProgramId.slice(0, 8)}…{deployedProgramId.slice(-6)}
+                    </code>
+                  ) : (
+                    <span>the network</span>
+                  )}
+                  . Editing here would deploy a new program at a different
+                  address and leak SOL in the old one. To change deployed code
+                  you&apos;ll need the Upgrade flow (coming soon) or fork the
+                  project to start a fresh deploy.
+                </div>
+              </div>
+            )}
+            <div
+              className={`w-full h-full p-3 ${deployedReadOnly ? 'cursor-default' : 'cursor-text'} overflow-y-auto bg-[#0a0a0a] flex flex-col code-editor`}
+              onClick={() => !isEditing && !deployedReadOnly && setIsEditing(true)}
             >
-              {isEditing ? (
+              {isEditing && !deployedReadOnly ? (
                 <textarea
                   value={code}
                   onChange={(e) => handleCodeChange(e.target.value)}
@@ -309,10 +346,10 @@ export const InteractiveCodeEditor = ({
                 />
               ) : (
                 <pre className={`flex-1 w-full font-mono text-[9px] text-gray-300 leading-relaxed whitespace-pre-wrap overflow-x-auto md:overflow-x-auto overflow-x-hidden m-0 ${isTablet ? 'text-[8px]' : ''} ${isAutoDemo ? 'text-[7px] [word-break:break-all]' : ''}`}>
-                  <code 
+                  <code
                     className="language-rust block w-full h-full"
-                    dangerouslySetInnerHTML={{ 
-                      __html: highlightCode(displayCode) 
+                    dangerouslySetInnerHTML={{
+                      __html: highlightCode(displayCode)
                     }}
                   />
                 </pre>
