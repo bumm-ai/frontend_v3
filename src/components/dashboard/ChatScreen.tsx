@@ -17,6 +17,7 @@ import type { AnimationStage } from '@/hooks/useContract';
 import type { ContractStatus } from '@/lib/api';
 import { MarkdownMessage } from '../chat/MarkdownMessage';
 import { ProposedActionCard } from '../ui/ProposedActionCard';
+import { RegenConfirmCard } from '../ui/RegenConfirmCard';
 
 interface ChatScreenProps {
   messages: ChatMessage[];
@@ -57,6 +58,10 @@ interface ChatScreenProps {
   onRegenerateWithFeedback?: (uid: string, feedback: string) => Promise<void>;
   /** POST /deploy retry — for contracts that built+audited OK but failed mid-deploy. */
   onRetryDeploy?: (uid: string) => Promise<void>;
+  /** Tier 2.2 — release a paused-for-approval deep_regen (RegenConfirmCard). */
+  onApproveRegen?: (uid: string) => Promise<void>;
+  /** Tier 2.2 — decline a paused-for-approval deep_regen (telemetry only). */
+  onDeclineRegen?: (uid: string) => Promise<void>;
   /** Apply an auto-regen proposal attached to a chat message (Tier 2). */
   onApplyProposal?: (messageId: string, logUid: string) => Promise<void>;
   /** Dismiss an auto-regen proposal (telemetry only, no pipeline effect). */
@@ -102,6 +107,8 @@ export default function ChatScreen({
   onSaveCode,
   onRegenerateWithFeedback,
   onRetryDeploy,
+  onApproveRegen,
+  onDeclineRegen,
   onApplyProposal,
   onDeclineProposal,
   onEditorDirtyChange,
@@ -114,8 +121,17 @@ export default function ChatScreen({
   const [retryingDeploy, setRetryingDeploy] = useState(false);
   const isPaused = contractStatus?.phase === 'paused_degraded';
   const isFailed = contractStatus?.phase === 'failed';
+  // Tier 2.2 — when fix-build hit a loop and pipeline paused awaiting
+  // user approval on the deep-regen spend, swap the generic paused banner
+  // for the RegenConfirmCard with cost preview.
+  const awaitingRegenApproval =
+    isPaused &&
+    contractStatus?.intervention_reason === 'awaiting_regen_approval';
   const canRegenerate =
-    !!currentProject?.uid && !!onRegenerateWithFeedback && (isPaused || isFailed);
+    !!currentProject?.uid &&
+    !!onRegenerateWithFeedback &&
+    (isPaused || isFailed) &&
+    !awaitingRegenApproval;
   // Failed-mid-deploy pattern: build + audit succeeded, no program_id was assigned,
   // pipeline ended in failed phase. Backend's _rearm_failed_deploy_if_needed will
   // reposition LangGraph at the deploy interrupt, so a plain POST /deploy retries it.
@@ -731,6 +747,18 @@ export default function ChatScreen({
             </button>
           </div>
         )}
+        {awaitingRegenApproval && currentProject?.uid && onApproveRegen && onDeclineRegen && (
+          <div className="mx-3 mb-2">
+            <RegenConfirmCard
+              pauseReason={contractStatus?.pause_report ?? 'Pipeline paused — fix-loop detected.'}
+              estimatedCredits={contractStatus?.pending_regen_credits ?? 0}
+              estimatedCostUsd={contractStatus?.pending_regen_cost_usd ?? 0}
+              estimatedSeconds={contractStatus?.pending_regen_seconds ?? 0}
+              onApprove={() => onApproveRegen(currentProject.uid)}
+              onDecline={() => onDeclineRegen(currentProject.uid)}
+            />
+          </div>
+        )}
         {canRegenerate && !requiresRedeploy && (
           <div className="mx-3 mb-2 p-2.5 rounded-md bg-yellow-500/10 border border-yellow-500/30 flex items-center justify-between gap-2">
             <div className="text-[11px] text-yellow-200/90 leading-snug">
@@ -985,6 +1013,18 @@ export default function ChatScreen({
               </div>
             </div>
 
+            {awaitingRegenApproval && currentProject?.uid && onApproveRegen && onDeclineRegen && (
+              <div className="mx-2 mb-2">
+                <RegenConfirmCard
+                  pauseReason={contractStatus?.pause_report ?? 'Pipeline paused — fix-loop detected.'}
+                  estimatedCredits={contractStatus?.pending_regen_credits ?? 0}
+                  estimatedCostUsd={contractStatus?.pending_regen_cost_usd ?? 0}
+                  estimatedSeconds={contractStatus?.pending_regen_seconds ?? 0}
+                  onApprove={() => onApproveRegen(currentProject.uid)}
+                  onDecline={() => onDeclineRegen(currentProject.uid)}
+                />
+              </div>
+            )}
             {canRegenerate && (
               <div className="mx-2 mb-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/30 flex items-center justify-between gap-2">
                 <div className="text-[10px] text-yellow-200/90 leading-snug">

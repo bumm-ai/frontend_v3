@@ -35,6 +35,11 @@ export const ENDPOINTS = {
   CONTRACT_CANCEL:          (uid: string) => `/api/v1/contracts/${uid}/cancel`,
   CONTRACT_FORK:            (uid: string) => `/api/v1/contracts/${uid}/fork`,
   CONTRACT_ROLLBACK:        (uid: string) => `/api/v1/contracts/${uid}/rollback`,
+  // Tier 2.2 — deep-regen approval gate. Frontend RegenConfirmCard calls
+  // these when the user clicks Approve / Decline on a paused-for-approval
+  // contract (intervention_reason === "awaiting_regen_approval").
+  CONTRACT_APPROVE_REGEN:   (uid: string) => `/api/v1/contracts/${uid}/approve-regen`,
+  CONTRACT_DECLINE_REGEN:   (uid: string) => `/api/v1/contracts/${uid}/decline-regen`,
   // Step-mode endpoints — used by BuildModal / AuditModal / DeployModal
   CONTRACT_BUILD:        (uid: string) => `/api/v1/build/${uid}`,
   CONTRACT_AUDIT_STEP:   (uid: string) => `/api/v1/audit/${uid}`,

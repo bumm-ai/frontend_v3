@@ -326,6 +326,32 @@ export class ApiClient {
     });
   }
 
+  /**
+   * Tier 2.2 — release a paused-for-approval deep-regen.
+   * Backend replays the deep_regen prompt via regenerate_with_feedback then
+   * restarts paste-mode; the WS contract stream will push the new code.
+   */
+  async approveRegen(uid: string): Promise<{
+    uid: string;
+    decision: 'approved' | 'declined';
+    new_phase: string;
+  }> {
+    return apiFetch(ENDPOINTS.CONTRACT_APPROVE_REGEN(uid), { method: 'POST' });
+  }
+
+  /**
+   * Tier 2.2 — mark a paused-for-approval contract as declined. Pure
+   * telemetry; contract stays paused so the user can drive next step via
+   * chat-Apply instead.
+   */
+  async declineRegen(uid: string): Promise<{
+    uid: string;
+    decision: 'approved' | 'declined';
+    new_phase: string;
+  }> {
+    return apiFetch(ENDPOINTS.CONTRACT_DECLINE_REGEN(uid), { method: 'POST' });
+  }
+
   // ── Credits ───────────────────────────────────────────────────────────────
 
   async getCreditsBalance(): Promise<BalanceResponse> {

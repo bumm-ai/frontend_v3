@@ -33,6 +33,12 @@ export interface ProposedAction {
   feedback: string;
   confidence: number;
   log_uid: string;
+  /** Fixed pipeline charge in credits (mirrors backend finalize._CREDITS_PER_RUN). */
+  estimated_credits?: number;
+  /** Order-of-magnitude USD forecast for one regen + ~1 fix iteration. */
+  estimated_cost_usd?: number;
+  /** Wall-clock estimate (generate + build + audit + one fix pass). */
+  estimated_seconds?: number;
   /** Local lifecycle — flipped optimistically when Apply / Decline succeeds. */
   status?: 'proposed' | 'applying' | 'applied' | 'declined' | 'error';
   errorMessage?: string;

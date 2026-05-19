@@ -1414,6 +1414,57 @@ export default function Dashboard() {
 
   // Regenerate from user feedback. Backend rewrites the source via LLM and
   // pauses at `phase=generated`; we follow up with a build trigger.
+  /**
+   * Tier 2.2 — release a paused-awaiting-approval deep_regen. The backend
+   * runs the deep-regen prompt via /approve-regen and restarts paste-mode;
+   * the contract WS stream pushes the new code, so we just kick off the
+   * follow-up build the same way handleRegenerateWithFeedback does.
+   */
+  const handleApproveRegen = useCallback(
+    async (uid: string) => {
+      try {
+        await tryRefresh();
+        await apiClient.approveRegen(uid);
+        addAIMessage('Approved — regenerating contract from scratch…');
+      } catch (err) {
+        addAIMessage(
+          `Approve regen failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        );
+        throw err;
+      }
+      try {
+        setActiveContractUid(uid);
+        await apiClient.triggerBuild(uid);
+      } catch (err) {
+        addAIMessage(
+          `Regenerated but build trigger failed: ${
+            err instanceof Error ? err.message : 'Unknown error'
+          }. Press Build to retry.`,
+        );
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const handleDeclineRegen = useCallback(
+    async (uid: string) => {
+      try {
+        await apiClient.declineRegen(uid);
+        addAIMessage(
+          'Declined auto-regenerate. Describe the fix in the chat to use targeted-fix mode instead.',
+        );
+      } catch (err) {
+        addAIMessage(
+          `Decline regen failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        );
+        throw err;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
   const handleRegenerateWithFeedback = useCallback(
     async (uid: string, feedback: string) => {
       try {
@@ -1762,6 +1813,8 @@ export default function Dashboard() {
             onSaveCode={handleSaveCode}
             onRegenerateWithFeedback={handleRegenerateWithFeedback}
             onRetryDeploy={handleRetryDeploy}
+            onApproveRegen={handleApproveRegen}
+            onDeclineRegen={handleDeclineRegen}
             onApplyProposal={handleApplyProposal}
             onDeclineProposal={handleDeclineProposal}
             onEditorDirtyChange={handleEditorDirtyChange}

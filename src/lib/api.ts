@@ -78,6 +78,14 @@ export interface ContractStatus {
   last_fix_description?: string | null;
   last_fix_source?: string | null;
   pause_report?: string | null;
+  // Tier 2.2 — structured pause reason. When equal to "awaiting_regen_approval"
+  // the UI renders RegenConfirmCard instead of the generic paused banner.
+  intervention_reason?: string | null;
+  // Tier 2.2 — cost forecast for the pending deep_regen. Populated only when
+  // intervention_reason === "awaiting_regen_approval"; zero/absent otherwise.
+  pending_regen_credits?: number;
+  pending_regen_cost_usd?: number;
+  pending_regen_seconds?: number;
   // Migration 0010: contract was deployed BEFORE the find_so fix and ended up
   // re-uploading the warm-seed Hello-World binary on a shared address.
   // Frontend shows a redeploy banner when this is true.
@@ -142,6 +150,12 @@ export interface ProposedAction {
   confidence: number;
   /** uid of the auto_regenerate_log row — pass back to /apply or /decline. */
   log_uid: string;
+  /** Tier 2.1 — fixed pipeline charge in credits (defaults to 10). */
+  estimated_credits?: number;
+  /** Tier 2.1 — USD forecast (regen + ~1 fix iteration). */
+  estimated_cost_usd?: number;
+  /** Tier 2.1 — wall-clock estimate in seconds. */
+  estimated_seconds?: number;
 }
 
 export interface ChatResponse {

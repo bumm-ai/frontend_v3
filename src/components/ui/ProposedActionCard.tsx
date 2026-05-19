@@ -1,9 +1,23 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { CheckCircle2, Loader2, RefreshCw, XCircle } from 'lucide-react';
+import { CheckCircle2, Clock, Coins, Loader2, RefreshCw, XCircle } from 'lucide-react';
 
 import type { ProposedAction } from '@/types/dashboard';
+
+const formatUsd = (usd: number): string => {
+  if (usd <= 0) return '$0.00';
+  if (usd < 0.01) return '<$0.01';
+  if (usd < 1) return `$${usd.toFixed(2)}`;
+  return `$${usd.toFixed(2)}`;
+};
+
+const formatSeconds = (seconds: number): string => {
+  if (seconds <= 0) return '~?';
+  if (seconds < 60) return `~${seconds}s`;
+  const mins = Math.round(seconds / 60);
+  return `~${mins}m`;
+};
 
 interface ProposedActionCardProps {
   action: ProposedAction;
@@ -99,7 +113,32 @@ export const ProposedActionCard = ({
         </div>
       )}
 
-      <div className="flex items-center justify-end gap-2 border-t border-amber-500/20 bg-neutral-950/30 px-3 py-2">
+      {(action.estimated_credits || action.estimated_cost_usd || action.estimated_seconds) ? (
+        <div className="mx-4 mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-amber-500/15 bg-neutral-900/40 px-2.5 py-1.5 text-[11px] text-neutral-300">
+          {action.estimated_credits ? (
+            <span className="inline-flex items-center gap-1">
+              <Coins className="h-3 w-3 text-amber-300/80" />
+              <span className="font-medium text-amber-100">{action.estimated_credits} credits</span>
+            </span>
+          ) : null}
+          {action.estimated_cost_usd ? (
+            <span className="inline-flex items-center gap-1 text-neutral-400">
+              <span className="opacity-60">·</span>
+              <span>~{formatUsd(action.estimated_cost_usd)} LLM</span>
+            </span>
+          ) : null}
+          {action.estimated_seconds ? (
+            <span className="inline-flex items-center gap-1 text-neutral-400">
+              <span className="opacity-60">·</span>
+              <Clock className="h-3 w-3" />
+              <span>{formatSeconds(action.estimated_seconds)}</span>
+            </span>
+          ) : null}
+          <span className="ml-auto text-neutral-500 italic">estimated</span>
+        </div>
+      ) : null}
+
+      <div className="mt-2 flex items-center justify-end gap-2 border-t border-amber-500/20 bg-neutral-950/30 px-3 py-2">
         <button
           type="button"
           onClick={onDecline}
