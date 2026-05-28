@@ -18,6 +18,7 @@ import type { ContractStatus } from '@/lib/api';
 import { MarkdownMessage } from '../chat/MarkdownMessage';
 import { ProposedActionCard } from '../ui/ProposedActionCard';
 import { RegenConfirmCard } from '../ui/RegenConfirmCard';
+import { RunningSpend } from '../ui/RunningSpend';
 
 interface ChatScreenProps {
   messages: ChatMessage[];
@@ -794,6 +795,22 @@ export default function ChatScreen({
             </div>
           </div>
         )}
+
+            {/* Running-spend banner — cumulative USD for this contract so far. */}
+            {(contractStatus?.cost_usd ?? 0) > 0 && (
+              <div className="mx-3 mb-2 flex justify-end">
+                <RunningSpend
+                  costUsd={contractStatus?.cost_usd}
+                  active={
+                    isGenerating ||
+                    isPipelineGenerating ||
+                    isPipelineBuilding ||
+                    isPipelineAuditing ||
+                    isPipelineDeploying
+                  }
+                />
+              </div>
+            )}
 
             {/* Interactive Code Area - flex-1 to fill space */}
             <div className="flex-1 p-3 min-h-0">

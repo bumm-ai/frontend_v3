@@ -91,6 +91,9 @@ export interface ContractStatus {
   // Frontend shows a redeploy banner when this is true.
   requires_redeploy?: boolean;
   stale_program_id?: string | null;
+  // Cumulative LLM spend (USD) attributed to this contract so far. Incremented
+  // per LLM call by the backend budget ledger; drives the running-spend banner.
+  cost_usd?: number;
 }
 
 export interface ContractCode {
