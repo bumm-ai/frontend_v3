@@ -213,6 +213,16 @@ export interface CreditRatesResponse {
   pipeline_credit_cost: number;
 }
 
+// ── Build queue (global build-farm state) ─────────────────────────────────────
+
+export interface BuildQueueResponse {
+  running: number;
+  queued: number;
+  capacity: number;
+  eta_seconds: number;
+  saturated: boolean;
+}
+
 // ── Deploy Estimate ──────────────────────────────────────────────────────────
 
 export interface DeployEstimate {

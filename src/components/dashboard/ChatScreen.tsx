@@ -19,6 +19,8 @@ import { MarkdownMessage } from '../chat/MarkdownMessage';
 import { ProposedActionCard } from '../ui/ProposedActionCard';
 import { RegenConfirmCard } from '../ui/RegenConfirmCard';
 import { RunningSpend } from '../ui/RunningSpend';
+import { BuildQueueChip } from '../ui/BuildQueueChip';
+import { useBuildQueue } from '@/hooks/useBuildQueue';
 
 interface ChatScreenProps {
   messages: ChatMessage[];
@@ -215,6 +217,9 @@ export default function ChatScreen({
   const isPipelineBuilding   = animationStage === 'building';
   const isPipelineAuditing   = animationStage === 'auditing';
   const isPipelineDeploying  = animationStage === 'deploying';
+  // Poll the global build-farm queue only while this contract is building;
+  // the chip self-hides unless the farm is saturated.
+  const buildQueue = useBuildQueue(isPipelineBuilding);
   const [isContractDeployed, setIsContractDeployed] = useState(() => {
     if (typeof window !== 'undefined' && currentProject) {
       try {
@@ -874,6 +879,7 @@ export default function ChatScreen({
 
             {/* Smart Action Button */}
             <div className="ml-4 flex flex-col items-end gap-1">
+              <BuildQueueChip state={buildQueue} />
               {editorDirty && (
                 <span
                   className="text-[9px] text-orange-300/90 px-2 py-0.5 rounded bg-orange-500/10 border border-orange-500/30 whitespace-nowrap"

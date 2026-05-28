@@ -53,6 +53,8 @@ export const ENDPOINTS = {
   // Connects directly to the backend (bypasses Next.js proxy which buffers streams)
   // Token passed as ?token= query param since EventSource cannot set headers.
   LOGS_STREAM:      (uid: string) => `${API_BASE}/api/v1/contracts/${uid}/logs/stream`,
+  // Global build-farm queue state (public, no auth). Polled while a build runs.
+  SYSTEM_BUILD_QUEUE: '/api/v1/system/build-queue',
 } as const;
 
 // Legacy v2 endpoints — kept for backward compat with existing UI components.

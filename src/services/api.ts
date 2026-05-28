@@ -4,6 +4,7 @@ import { API_PROXY, ENDPOINTS } from '@/config/api';
 import type {
   AuthTokens,
   BalanceResponse,
+  BuildQueueResponse,
   ChatMessagePayload,
   ChatResponse,
   ContractCreated,
@@ -100,6 +101,11 @@ export class ApiClient {
 
   async healthCheck(): Promise<Record<string, string>> {
     return apiFetch(ENDPOINTS.HEALTH, { auth: false });
+  }
+
+  /** Global build-farm queue state. Public (no auth); polled while a build runs. */
+  async getBuildQueue(): Promise<BuildQueueResponse> {
+    return apiFetch(ENDPOINTS.SYSTEM_BUILD_QUEUE, { auth: false });
   }
 
   // ── Auth ──────────────────────────────────────────────────────────────────
