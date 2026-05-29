@@ -14,8 +14,6 @@ import { apiClient } from '@/services/api';
 import { tryRefresh } from '@/services/authService';
 import type { ChatMessagePayload } from '@/lib/api';
 import { humanizeErrorCodes } from '@/lib/errorTranslate';
-// import { WalletDebug } from '../debug/WalletDebug';
-// import { SimpleWalletTest } from '../debug/SimpleWalletTest';
 import LoginScreen from './LoginScreen';
 import ChatScreen from './ChatScreen';
 import { PasteCodeModal } from '@/components/ui/PasteCodeModal';
@@ -114,14 +112,7 @@ export default function Dashboard() {
     isLoading,
     error,
     generateContract,
-    generateInProject,
-    auditContract,
-    buildContract,
-    deployContract,
-    trackTaskStatus,
-    loadProjects,
     createProject,
-    loadChatHistory,
   } = useBummApi();
 
   // ── Real projects state (useBummApi.projects / updateProjects are no-op stubs) ──
@@ -193,7 +184,10 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
-  const [isBuilding, setIsBuilding] = useState(false);
+  // isBuilding is wired to ChatScreen's prop; the legacy setter was removed with
+  // the dead handleBuild handler, so this stays false (build state now derives
+  // from contract.status via deriveUIFromStatus).
+  const [isBuilding] = useState(false);
   const [generatedCode, setGeneratedCode] = useState<{ projectUid: string; code: string } | null>(null);
   const [generationAttemptFailed, setGenerationAttemptFailed] = useState(0);
   const [isPasteModalOpen, setIsPasteModalOpen] = useState(false);
@@ -1054,168 +1048,6 @@ export default function Dashboard() {
     setMessages(prev => [...prev, userMessage]);
   };
 
-
-  const generateAIResponse = (userMessage: string): string => {
-    const responses = [
-      "I'll help you create that smart contract. Let me generate the Rust code for you.",
-      "Great idea! I'm analyzing the best approach for your Solana program.",
-      "I can help you implement that feature. Here's what I suggest...",
-      "That's an interesting use case for Solana. Let me create the program structure.",
-      "I'll generate the anchor framework code for your project. This will include the necessary instructions and account structures."
-    ];
-    return responses[Math.floor(Math.random() * responses.length)];
-  };
-
-  const handleBuild = async (code: string) => {
-    if (!auth.isAuthenticated || !code.trim()) return;
-    
-    // Credit check temporarily disabled - frontend only
-    // if (!hasEnoughCredits('build')) {
-    //   const insufficientCreditsMessage: ChatMessage = {
-    //     id: generateUniqueMessageId(),
-    //     content: 'Insufficient credits for contract build. Please buy more credits to continue.',
-    //     timestamp: new Date(),
-    //     isUser: false
-    //   };
-    //   setMessages(prev => [...prev, insufficientCreditsMessage]);
-    //   return;
-    // }
-    
-    setIsBuilding(true);
-    
-    try {
-      // Add build status message (will be updated with real status)
-      const buildStatusMessageId = generateUniqueMessageId();
-      const buildingMessage: ChatMessage = {
-        id: buildStatusMessageId,
-        content: '🔧 Initializing build...',
-        timestamp: new Date(),
-        isUser: false
-      };
-      setMessages(prev => [...prev, buildingMessage]);
-      
-      // Start build via API (use current project if exists)
-      const project = await buildContract(code, currentProject?.uid);
-      
-      // Track build progress (use bummUid for API polling)
-      const buildBummUid = project.bummUid || project.uid;
-      console.log(`🔄 Tracking build: projectUid=${project.uid}, bummUid=${buildBummUid}`);
-      trackTaskStatus(
-        project.uid,
-        'build',
-        (progress) => {
-          setMessages(prev =>
-            prev.map(m =>
-              m.id === buildStatusMessageId
-                ? { ...m, content: `🔧 ${progress.message}` }
-                : m
-            )
-          );
-        },
-        (result) => {
-          // Analytics tracking
-          analytics.trackContractBuild(project.uid);
-          analytics.trackCreditSpend('build', 25, project.uid);
-           
-          // Build completed
-          setIsBuilding(false);
-          const successMessage: ChatMessage = {
-            id: generateUniqueMessageId(),
-            content: 'Build completed successfully! Your Solana program is ready for deployment.',
-            timestamp: new Date(),
-            isUser: false,
-            projectUid: project.uid,
-            taskType: 'build'
-          };
-          setMessages(prev => [...prev, successMessage]);
-        },
-        (error) => {
-          // Build error
-          setIsBuilding(false);
-          const errorMessage: ChatMessage = {
-            id: generateUniqueMessageId(),
-            content: `Build failed: ${error}`,
-            timestamp: new Date(),
-            isUser: false,
-            projectUid: project.uid,
-            taskType: 'build'
-          };
-          setMessages(prev => [...prev, errorMessage]);
-        },
-        buildBummUid // Pass backend bumm UID for API polling
-      );
-    } catch (err) {
-      setIsBuilding(false);
-      const errorMessage: ChatMessage = {
-        id: generateUniqueMessageId(),
-        content: `Failed to start build: ${err instanceof Error ? err.message : 'Unknown error'}`,
-        timestamp: new Date(),
-        isUser: false
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    }
-  };
-
-  const handleDeploy = async (code: string): Promise<string | undefined> => {
-    if (!auth.isAuthenticated || !code.trim()) return undefined;
-    
-    try {
-      // Add message about deployment start
-      const deployingMessage: ChatMessage = {
-        id: generateUniqueMessageId(),
-        content: 'Starting deployment...',
-        timestamp: new Date(),
-        isUser: false
-      };
-      setMessages(prev => [...prev, deployingMessage]);
-      
-      // Start deployment via API
-      const contractAddress = await deployContract(code);
-      
-      // Update current project
-      if (currentProject) {
-        const updatedProject = {
-          ...currentProject,
-          contractAddress,
-          isDeployed: true,
-          status: 'deployed' as const,
-          updated_at: new Date().toISOString()
-        };
-        
-        setCurrentProject(updatedProject);
-        
-        // Also update project in projects list
-        updateProjects(prev => prev.map(p => 
-          p.uid === currentProject.uid ? updatedProject : p
-        ));
-      }
-      
-      // Analytics tracking
-      if (currentProject) {
-        analytics.trackContractDeploy(currentProject.uid, contractAddress);
-      }
-
-      // Add successful deployment message
-      const successMessage: ChatMessage = {
-        id: generateUniqueMessageId(),
-        content: `Deployment successful! Your smart contract is now live on Solana. Contract address: ${contractAddress}`,
-        timestamp: new Date(),
-        isUser: false
-      };
-      setMessages(prev => [...prev, successMessage]);
-      return contractAddress;
-    } catch (err) {
-      const errorMessage: ChatMessage = {
-        id: generateUniqueMessageId(),
-        content: `Deployment failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
-        timestamp: new Date(),
-        isUser: false
-      };
-      setMessages(prev => [...prev, errorMessage]);
-      throw err;
-    }
-  };
-
   const handleCreateNew = () => {
     if (!auth.isAuthenticated) return;
 
@@ -1834,8 +1666,6 @@ export default function Dashboard() {
       <AnimatePresence mode="wait">
         {renderCurrentScreen()}
       </AnimatePresence>
-      {/* <WalletDebug /> */}
-      {/* <SimpleWalletTest /> */}
 
       {/* Rollback modal — appears after Stop to offer version restore */}
       <RollbackModal

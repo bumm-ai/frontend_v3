@@ -48,40 +48,12 @@ export const ENDPOINTS = {
   CREDITS_PURCHASE: '/api/v1/credits/purchase',
   CREDITS_HISTORY:  '/api/v1/credits/history',
   CREDITS_RATES:    '/api/v1/credits/rates',
-  WS_CONTRACT:      (uid: string) => `${WS_BASE}/ws/contracts/${uid}`,
-  WS_CREDITS:       `${WS_BASE}/ws/credits`,
   // Connects directly to the backend (bypasses Next.js proxy which buffers streams)
   // Token passed as ?token= query param since EventSource cannot set headers.
   LOGS_STREAM:      (uid: string) => `${API_BASE}/api/v1/contracts/${uid}/logs/stream`,
   // Global build-farm queue state (public, no auth). Polled while a build runs.
   SYSTEM_BUILD_QUEUE: '/api/v1/system/build-queue',
 } as const;
-
-// Legacy v2 endpoints — kept for backward compat with existing UI components.
-// These no longer exist in backend_v3 and will return 404.
-// TODO: remove when all UI components are migrated to v3.
-const LEGACY_ENDPOINTS = {
-  BUMM_LIST:           '/api/v1/list/',
-  BUMM_GENERATE:       '/api/v1/generate/',
-  BUMM_STATUS_GENERATE:'/api/v1/status/generate/',
-  BUMM_AUDIT:          '/api/v1/audit/',
-  BUMM_AUDIT_STATUS:   '/api/v1/audit/status/',
-  BUMM_BUILD:          '/api/v1/build/',
-  BUMM_BUILD_STATUS:   '/api/v1/build/status/',
-  BUMM_DEPLOY:         '/api/v1/deploy/',
-  BUMM_DEPLOY_STATUS:  '/api/v1/deploy/status/',
-  USER_WALLET:         '/api/v1/user/wallet/',
-  CHAT_MESSAGE:        '/api/v1/chat/message/',
-  CHAT_HISTORY:        '/api/v1/chat/history',
-  CHAT_UNLINKED:       '/api/v1/chat/unlinked',
-  CREDITS_RATES:       '/api/v1/credits/rates',
-  CREDITS_PRICING:     '/api/v1/credits/pricing',
-  CREDITS_SPEND:       '/api/v1/credits/spend',
-  CREDITS_HISTORY:     '/api/v1/credits/history',
-} as const;
-
-// Keep old ENDPOINTS name for legacy imports — merges v3 + legacy v2
-export const API_ENDPOINTS = { ...ENDPOINTS, ...LEGACY_ENDPOINTS } as const;
 
 export const API_CONFIG = {
   TIMEOUT:          60_000,
