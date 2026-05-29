@@ -534,6 +534,13 @@ export default function Dashboard() {
       // Fetch generated code and enrich project
       contract.getCode().then(result => {
         setGeneratedCode({ projectUid: uid, code: result.code });
+        // Generation-complete chat notification — closes the silent gap after
+        // the pipeline bubble ends. No cost line here (running spend lives in
+        // the dedicated banner); just confirm the artifact is ready + next step.
+        addAIMessageForProject(
+          uid,
+          '**Contract generated** ✓ — your Solana/Anchor smart contract is ready. Click **Build** to compile.'
+        );
         const richProject: Project = {
           uid, name: earlyName, status: 'generated',
           created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
@@ -632,11 +639,15 @@ export default function Dashboard() {
       updateProjects(ps => ps.map(p => p.uid === uid ? { ...p, status: 'audited' } : p));
       (async () => {
         try {
-          // Fetch BOTH audit findings and the cumulative build fixes so we can render
-          // a complete "what was changed before deploy" summary in the chat.
-          const [auditData, fixesData] = await Promise.all([
+          // Fetch audit findings, cumulative build fixes, AND the Solana deploy
+          // estimate so the post-audit message can preview the network fee the
+          // user will pay BEFORE they click Publish (the deploy is irreversible
+          // and costs real devnet SOL — surfacing the simulated cost here is the
+          // whole point of the deploy-estimate simulation).
+          const [auditData, fixesData, deployEst] = await Promise.all([
             apiClient.getContractAudit(uid),
             apiClient.getContractFixes(uid).catch(() => ({ fixes: [] })),
+            apiClient.getDeployEstimate(uid).catch(() => null),
           ]);
           type Vuln = {
             severity?: string;
@@ -652,6 +663,19 @@ export default function Dashboard() {
           const buildFixCount = ((fixesData?.fixes || []) as Array<{ was_successful?: boolean | null }>)
             .filter(f => f.was_successful !== false).length;
 
+          // Network-fee forecast (from the deploy-estimate simulation). Shown
+          // right before the Publish CTA so the user knows the cost up front.
+          // Empty string when the estimate is unavailable — never blocks the
+          // audit summary.
+          const deployLine = deployEst
+            ? `\n\n**Estimated deploy cost:** ~${deployEst.estimated_sol.toFixed(4)} SOL network fee` +
+              ` (~${deployEst.estimated_credits} credit${deployEst.estimated_credits === 1 ? '' : 's'})` +
+              ` on Solana ${deployEst.network}.` +
+              (deployEst.sufficient === false
+                ? ` _Balance is short by ${deployEst.missing_credits} credit${deployEst.missing_credits === 1 ? '' : 's'} — top up before publishing._`
+                : '')
+            : '';
+
           if (vulns.length === 0) {
             addAIMessageForProject(
               uid,
@@ -660,7 +684,7 @@ export default function Dashboard() {
               `- Static analysis: clippy + cargo audit passed\n` +
               `- AI security review: passed\n` +
               `${buildFixCount > 0 ? `- Build fixes applied earlier: ${buildFixCount}\n` : ''}` +
-              `\nContract is ready to deploy. Click **Publish** to deploy to Solana devnet.`
+              `\nContract is ready to deploy.${deployLine}\n\nClick **Publish** to deploy to Solana devnet.`
             );
           } else {
             // Group vulnerabilities by severity
@@ -708,7 +732,7 @@ export default function Dashboard() {
               `- Security fixes: **${vulns.length}**\n` +
               `- Static analysis: clippy + cargo audit passed\n` +
               `- AI security review: passed\n\n` +
-              `Contract is ready to deploy. Click **Publish** to deploy to Solana devnet.`
+              `Contract is ready to deploy.${deployLine}\n\nClick **Publish** to deploy to Solana devnet.`
             );
           }
         } catch {

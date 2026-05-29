@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, Bot, User as UserIcon, Code, ClipboardPaste } from 'lucide-react';
+import { Send, Bot, User as UserIcon, Code } from 'lucide-react';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { HeaderWalletButton } from '../ui/HeaderWalletButton';
@@ -614,16 +614,6 @@ export default function ChatScreen({
               <Bot className="w-4 h-4 text-orange-500" />
               AI Agent Chat
             </div>
-            {onOpenPasteModal && (
-              <button
-                onClick={() => onOpenPasteModal()}
-                title="Paste existing Anchor/Rust code"
-                className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-gray-500 hover:text-orange-400 hover:bg-orange-500/10 border border-transparent hover:border-orange-500/20 transition-all"
-              >
-                <ClipboardPaste className="w-3 h-3" />
-                Paste code
-              </button>
-            )}
           </div>
         </div>
         
@@ -933,15 +923,6 @@ export default function ChatScreen({
                   <Bot className="w-4 h-4 text-orange-500" />
                   AI Agent Chat
                 </div>
-                {onOpenPasteModal && (
-                  <button
-                    onClick={() => onOpenPasteModal()}
-                    className="flex items-center gap-1 px-2 py-1 rounded text-xs text-gray-500 hover:text-orange-400 hover:bg-orange-500/10 transition-all"
-                  >
-                    <ClipboardPaste className="w-3 h-3" />
-                    Paste
-                  </button>
-                )}
               </div>
             </div>
             
