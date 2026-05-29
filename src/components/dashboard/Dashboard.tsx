@@ -18,6 +18,8 @@ import LoginScreen from './LoginScreen';
 import ChatScreen from './ChatScreen';
 import { PasteCodeModal } from '@/components/ui/PasteCodeModal';
 import { RollbackModal } from '@/components/ui/RollbackModal';
+import { WalletDisconnectedBanner } from '@/components/ui/WalletDisconnectedBanner';
+import { useWalletBanner } from '@/hooks/useWalletBanner';
 import type { Network } from '@/lib/api';
 
 /**
@@ -79,6 +81,9 @@ export default function Dashboard() {
   const { hasEnoughCredits, loadBalance } = useCredits();
   const analytics = useAnalytics();
   const auth = useAuth();
+  // Non-blocking banner when the session is authenticated but the wallet is
+  // disconnected (auth is JWT-based and survives wallet disconnect).
+  const walletBanner = useWalletBanner(auth.isAuthenticated);
   const [currentState, setCurrentState] = useState<DashboardState>('login');
   
   // Counter for generating unique message IDs
@@ -1666,6 +1671,14 @@ export default function Dashboard() {
       <AnimatePresence mode="wait">
         {renderCurrentScreen()}
       </AnimatePresence>
+
+      {/* Wallet-disconnected banner — pinned top-center, only when authenticated
+          but the wallet is not connected (renders null otherwise). */}
+      <div className="pointer-events-none fixed inset-x-0 top-3 z-50 flex justify-center px-4">
+        <div className="pointer-events-auto w-full max-w-xl">
+          <WalletDisconnectedBanner state={walletBanner} />
+        </div>
+      </div>
 
       {/* Rollback modal — appears after Stop to offer version restore */}
       <RollbackModal
