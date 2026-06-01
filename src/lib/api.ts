@@ -67,6 +67,9 @@ export interface ContractStatus {
   audit_attempt: number;
   audit_ok: boolean;
   program_id: string | null;
+  // Network the contract is/was deployed to — drives the correct Explorer
+  // cluster link (devnet/testnet/mainnet-beta). Optional for backward-compat.
+  deploy_network?: Network | string | null;
   error: string | null;
   // Step-mode: next step waiting to be triggered, or null if pipeline running/done.
   next_step: 'build' | 'audit' | 'deploy' | null;

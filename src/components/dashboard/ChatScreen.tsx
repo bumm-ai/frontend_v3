@@ -15,6 +15,7 @@ import { RegenerateFeedbackModal } from '../ui/RegenerateFeedbackModal';
 import { ChatMessage, CodeSource, ActionButtonState, Project, User } from '@/types/dashboard';
 import type { AnimationStage } from '@/hooks/useContract';
 import type { ContractStatus } from '@/lib/api';
+import { explorerAddressUrl } from '@/lib/explorer';
 import { MarkdownMessage } from '../chat/MarkdownMessage';
 import { ProposedActionCard } from '../ui/ProposedActionCard';
 import { RegenConfirmCard } from '../ui/RegenConfirmCard';
@@ -848,7 +849,7 @@ export default function ChatScreen({
                 <div className="space-y-0.5" style={{ fontSize: '9px', lineHeight: '1.2' }}>
                   <div>Published: {deploymentDate.toLocaleDateString('en-GB')} {deploymentDate.toLocaleTimeString('en-GB')}</div>
                   <div>Last Update: {lastUpdateDate.toLocaleDateString('en-GB')} {lastUpdateDate.toLocaleTimeString('en-GB')}</div>
-                  <div>Address: <a href={`https://explorer.solana.com/address/${deployedContractAddress}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:underline truncate max-w-[120px] inline-block align-bottom" title={deployedContractAddress}>{deployedContractAddress}</a></div>
+                  <div>Address: <a href={explorerAddressUrl(deployedContractAddress, contractStatus?.deploy_network)} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:underline truncate max-w-[120px] inline-block align-bottom" title={deployedContractAddress}>{deployedContractAddress}</a></div>
                 </div>
               ) : (
                 <div>This preview updates as you chat with AI agents</div>
@@ -1103,7 +1104,7 @@ export default function ChatScreen({
                     <div className="space-y-0.5" style={{ fontSize: '9px', lineHeight: '1.2' }}>
                       <div>Published: {deploymentDate.toLocaleDateString('en-GB')} {deploymentDate.toLocaleTimeString('en-GB')}</div>
                       <div>Last Update: {lastUpdateDate.toLocaleDateString('en-GB')} {lastUpdateDate.toLocaleTimeString('en-GB')}</div>
-                      <div>Address: <a href={`https://explorer.solana.com/address/${deployedContractAddress}?cluster=devnet`} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:underline truncate max-w-[120px] inline-block align-bottom" title={deployedContractAddress}>{deployedContractAddress}</a></div>
+                      <div>Address: <a href={explorerAddressUrl(deployedContractAddress, contractStatus?.deploy_network)} target="_blank" rel="noopener noreferrer" className="text-orange-400 hover:underline truncate max-w-[120px] inline-block align-bottom" title={deployedContractAddress}>{deployedContractAddress}</a></div>
                     </div>
                   ) : (
                     <div>This preview updates as you chat with AI agents</div>

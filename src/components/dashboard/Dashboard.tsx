@@ -21,6 +21,7 @@ import { RollbackModal } from '@/components/ui/RollbackModal';
 import { WalletDisconnectedBanner } from '@/components/ui/WalletDisconnectedBanner';
 import { useWalletBanner } from '@/hooks/useWalletBanner';
 import type { Network } from '@/lib/api';
+import { explorerAddressUrl } from '@/lib/explorer';
 
 /**
  * Derive the action button label from backend contract state.
@@ -755,7 +756,7 @@ export default function Dashboard() {
         : p));
       addAIMessageForProject(
         uid,
-        `**Deployed to Solana.** Program ID: \`${pid}\`\n\nView on Explorer: https://explorer.solana.com/address/${pid}?cluster=devnet`
+        `**Deployed to Solana.** Program ID: \`${pid}\`\n\nView on Explorer: ${explorerAddressUrl(pid, curr.deploy_network)}`
       );
       setPipelineMsgId(null);
       setActiveContractUid(null);
