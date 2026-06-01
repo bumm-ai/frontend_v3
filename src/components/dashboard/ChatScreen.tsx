@@ -1069,7 +1069,7 @@ export default function ChatScreen({
                 key={currentProject?.uid ?? 'no-project'}
                 initialCode={contractCode}
                 onCodeChange={handleCodeChange}
-                isGenerating={isGenerating}
+                isGenerating={isGenerating || isPipelineGenerating}
                 isBuilding={isPipelineBuilding}
                 isAuditing={isPipelineAuditing}
                 isDeploying={isPipelineDeploying}
