@@ -19,6 +19,7 @@ import { explorerAddressUrl } from '@/lib/explorer';
 import { MarkdownMessage } from '../chat/MarkdownMessage';
 import { ProposedActionCard } from '../ui/ProposedActionCard';
 import { RegenConfirmCard } from '../ui/RegenConfirmCard';
+import { DeployConfirmCard } from '../ui/DeployConfirmCard';
 import { RunningSpend } from '../ui/RunningSpend';
 import { BuildQueueChip } from '../ui/BuildQueueChip';
 import { useBuildQueue } from '@/hooks/useBuildQueue';
@@ -123,6 +124,7 @@ export default function ChatScreen({
   const [mobileActiveTab, setMobileActiveTab] = useState<'chat' | 'code' | 'network'>('chat');
   const [regenOpen, setRegenOpen] = useState(false);
   const [retryingDeploy, setRetryingDeploy] = useState(false);
+  const [deployConfirmOpen, setDeployConfirmOpen] = useState(false);
   const isPaused = contractStatus?.phase === 'paused_degraded';
   const isFailed = contractStatus?.phase === 'failed';
   // Tier 2.2 — when fix-build hit a loop and pipeline paused awaiting
@@ -492,10 +494,25 @@ export default function ChatScreen({
         actionButtonState === 'audit'    ? 'audit'  :
         actionButtonState === 'publish'  ? 'deploy' :
         actionButtonState === 'upgrade'  ? 'deploy' : null;
+      // Deploy is irreversible and spends real SOL — gate it behind an inline
+      // confirm card (fe-07) instead of firing immediately. Build/audit run
+      // straight through.
+      if (step === 'deploy') {
+        setDeployConfirmOpen(true);
+        return;
+      }
       if (step) {
         try { await onStartStep(step); } catch {}
       }
       return;
+    }
+  };
+
+  // Run the actual deploy once the user confirms the inline card.
+  const handleConfirmDeploy = async () => {
+    setDeployConfirmOpen(false);
+    if (currentProject?.bummUid && onStartStep) {
+      try { await onStartStep('deploy'); } catch {}
     }
   };
 
@@ -792,6 +809,15 @@ export default function ChatScreen({
           </div>
         )}
 
+        {deployConfirmOpen && (
+          <DeployConfirmCard
+            network={contractStatus?.deploy_network}
+            isUpgrade={effectiveButtonState === 'upgrade'}
+            onConfirm={handleConfirmDeploy}
+            onCancel={() => setDeployConfirmOpen(false)}
+          />
+        )}
+
             {/* Running-spend banner — cumulative USD for this contract so far. */}
             {(contractStatus?.cost_usd ?? 0) > 0 && (
               <div className="mx-3 mb-2 flex justify-end">
@@ -1062,6 +1088,15 @@ export default function ChatScreen({
                   </button>
                 </div>
               </div>
+            )}
+
+            {deployConfirmOpen && (
+              <DeployConfirmCard
+                network={contractStatus?.deploy_network}
+                isUpgrade={effectiveButtonState === 'upgrade'}
+                onConfirm={handleConfirmDeploy}
+                onCancel={() => setDeployConfirmOpen(false)}
+              />
             )}
 
             {/* Interactive Code Area */}

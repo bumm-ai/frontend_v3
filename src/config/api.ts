@@ -40,7 +40,8 @@ export const ENDPOINTS = {
   // contract (intervention_reason === "awaiting_regen_approval").
   CONTRACT_APPROVE_REGEN:   (uid: string) => `/api/v1/contracts/${uid}/approve-regen`,
   CONTRACT_DECLINE_REGEN:   (uid: string) => `/api/v1/contracts/${uid}/decline-regen`,
-  // Step-mode endpoints — used by BuildModal / AuditModal / DeployModal
+  // Step-mode endpoints — driven by handleActionClick / onStartStep + the
+  // inline DeployConfirmCard (the old Build/Audit/Deploy modals were removed).
   CONTRACT_BUILD:        (uid: string) => `/api/v1/build/${uid}`,
   CONTRACT_AUDIT_STEP:   (uid: string) => `/api/v1/audit/${uid}`,
   CONTRACT_DEPLOY_STEP:  (uid: string) => `/api/v1/deploy/${uid}`,
