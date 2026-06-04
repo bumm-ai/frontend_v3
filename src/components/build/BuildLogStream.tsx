@@ -14,9 +14,25 @@ try {
   Anser = null;
 }
 
+// anser.ansiToHtml does NOT escape HTML — it passes `<`/`>`/`&` through verbatim.
+// Build logs echo the user's own Rust source (compiler errors quote offending
+// lines), so a crafted contract could inject `<img onerror=…>` straight into the
+// rendered log via dangerouslySetInnerHTML. Escape HTML entities BEFORE colorize:
+// the ANSI escape sequences (ESC `[` … `m`) contain none of these characters, so
+// escaping first leaves the colouring intact while neutralising any markup.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function colorize(line: string): string {
-  if (!Anser) return line;
-  return Anser.ansiToHtml(line);
+  const safe = escapeHtml(line);
+  if (!Anser) return safe;
+  return Anser.ansiToHtml(safe);
 }
 
 interface BuildLogStreamProps {

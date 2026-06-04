@@ -18,6 +18,11 @@ import type {
   DeployEstimate,
   PurchaseResponse,
   CodeHistoryResponse,
+  FundDeployResponse,
+  ContractIdlResponse,
+  SubscriptionPlansResponse,
+  SubscriptionStatus,
+  SubscribeResponse,
 } from '@/lib/api';
 import { balanceBus } from '@/services/balanceBus';
 
@@ -275,6 +280,28 @@ export class ApiClient {
     return apiFetch(ENDPOINTS.CONTRACT_DEPLOY_ESTIMATE(uid));
   }
 
+  /**
+   * User-signed deploy (B3): after the user signs a SOL transfer to the
+   * deployer wallet (mainnet) the funding signature is submitted here; the
+   * backend verifies it on-chain and resumes the deploy. On test nets the
+   * signature is ignored (free airdrop) — pass any 64-char placeholder.
+   */
+  async fundDeploy(uid: string, fundingTxSignature: string): Promise<FundDeployResponse> {
+    return apiFetch(ENDPOINTS.CONTRACT_FUND_DEPLOY(uid), {
+      method: 'POST',
+      body: JSON.stringify({ funding_tx_signature: fundingTxSignature }),
+    });
+  }
+
+  /**
+   * The contract's Anchor IDL for the instruction-aware action UI. Returns
+   * `idl: null` (never 404) when the build produced none — callers degrade to
+   * the static action menu.
+   */
+  async getContractIdl(uid: string): Promise<ContractIdlResponse> {
+    return apiFetch(ENDPOINTS.CONTRACT_IDL(uid));
+  }
+
   async getContractFixes(uid: string): Promise<{
     uid: string;
     build_ok: boolean;
@@ -380,6 +407,28 @@ export class ApiClient {
 
   async getCreditRates(): Promise<CreditRatesResponse> {
     return apiFetch(ENDPOINTS.CREDITS_RATES);
+  }
+
+  // ── Subscriptions ───────────────────────────────────────────────────────────
+
+  /** Public catalogue of subscription tiers + the treasury recipient. */
+  async getSubscriptionPlans(): Promise<SubscriptionPlansResponse> {
+    return apiFetch(ENDPOINTS.SUBSCRIPTION_PLANS, { auth: false });
+  }
+
+  /** The authenticated user's current plan, expiry, and active flag. */
+  async getSubscription(): Promise<SubscriptionStatus> {
+    return apiFetch(ENDPOINTS.SUBSCRIPTION_STATUS);
+  }
+
+  /** Verify the SOL payment and activate/renew a plan; bumps the credit bus. */
+  async subscribe(planId: string, solTxSignature: string): Promise<SubscribeResponse> {
+    const res = await apiFetch<SubscribeResponse>(ENDPOINTS.SUBSCRIPTION_SUBSCRIBE, {
+      method: 'POST',
+      body: JSON.stringify({ plan_id: planId, sol_tx_signature: solTxSignature }),
+    });
+    balanceBus.emit(res.new_balance);
+    return res;
   }
 }
 

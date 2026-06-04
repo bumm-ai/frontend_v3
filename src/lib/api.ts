@@ -231,13 +231,102 @@ export interface BuildQueueResponse {
 export interface DeployEstimate {
   so_size_bytes: number | null;
   estimated_sol: number;
+  estimated_lamports?: number;
+  estimated_usd?: number | null;
   estimated_credits: number;
+  payer?: string;
   user_balance_credits: number;
   user_sol_balance: number | null;
   sufficient: boolean;
+  missing_sol?: number;
   missing_credits: number;
   network: string;
+  simulated?: boolean;
+  // Recipient the user must fund on mainnet before /fund-deploy. Null on test
+  // nets (free airdrop) or when no deployer wallet is configured server-side.
+  deployer_pubkey?: string | null;
   note: string | null;
+}
+
+// ── Fund-first deploy (B3) ───────────────────────────────────────────────────
+
+export interface FundDeployResponse {
+  status: string;
+  uid: string;
+  network: string;
+  verified_lamports: number;
+  estimated_lamports: number;
+}
+
+// ── Contract IDL (B6/B7) ─────────────────────────────────────────────────────
+
+export interface IDLInstructionArg {
+  name: string;
+  type: unknown;
+}
+
+export interface IDLInstructionAccount {
+  name: string;
+  isMut?: boolean;
+  isSigner?: boolean;
+  writable?: boolean;
+  signer?: boolean;
+  pda?: unknown;
+}
+
+export interface IDLInstruction {
+  name: string;
+  accounts?: IDLInstructionAccount[];
+  args?: IDLInstructionArg[];
+  discriminator?: number[];
+}
+
+export interface AnchorIdl {
+  address?: string;
+  metadata?: { name?: string; version?: string; spec?: string };
+  name?: string;
+  version?: string;
+  instructions?: IDLInstruction[];
+  accounts?: Array<{ name: string }>;
+  [key: string]: unknown;
+}
+
+export interface ContractIdlResponse {
+  idl: AnchorIdl | null;
+  program_id: string | null;
+  network: string;
+}
+
+// ── Subscriptions (B6/B7) ────────────────────────────────────────────────────
+
+export interface SubscriptionPlan {
+  plan_id: string;
+  label: string;
+  price_usd: number;
+  price_lamports: number;
+  monthly_credits: number;
+  period_days: number;
+  blurb: string;
+}
+
+export interface SubscriptionPlansResponse {
+  enabled: boolean;
+  treasury_wallet: string | null;
+  plans: SubscriptionPlan[];
+}
+
+export interface SubscriptionStatus {
+  tier: string | null;
+  expires_at: string | null;
+  active: boolean;
+}
+
+export interface SubscribeResponse {
+  plan_id: string;
+  credits_added: number;
+  new_balance: number;
+  expires_at: string;
+  active: boolean;
 }
 
 // ── Errors ────────────────────────────────────────────────────────────────────

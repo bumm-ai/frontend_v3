@@ -31,6 +31,8 @@ export const ENDPOINTS = {
   CONTRACT_UPDATE:          (uid: string) => `/api/v1/contracts/${uid}`,
   CONTRACT_DELETE:          (uid: string) => `/api/v1/contracts/${uid}`,
   CONTRACT_DEPLOY_ESTIMATE: (uid: string) => `/api/v1/contracts/${uid}/deploy-estimate`,
+  CONTRACT_FUND_DEPLOY:     (uid: string) => `/api/v1/contracts/${uid}/fund-deploy`,
+  CONTRACT_IDL:             (uid: string) => `/api/v1/contracts/${uid}/idl`,
   CONTRACT_FIXES:           (uid: string) => `/api/v1/contracts/${uid}/fixes`,
   CONTRACT_CANCEL:          (uid: string) => `/api/v1/contracts/${uid}/cancel`,
   CONTRACT_FORK:            (uid: string) => `/api/v1/contracts/${uid}/fork`,
@@ -49,6 +51,9 @@ export const ENDPOINTS = {
   CREDITS_PURCHASE: '/api/v1/credits/purchase',
   CREDITS_HISTORY:  '/api/v1/credits/history',
   CREDITS_RATES:    '/api/v1/credits/rates',
+  SUBSCRIPTION_PLANS:     '/api/v1/subscription/plans',
+  SUBSCRIPTION_STATUS:    '/api/v1/subscription',
+  SUBSCRIPTION_SUBSCRIBE: '/api/v1/subscription/subscribe',
   // Connects directly to the backend (bypasses Next.js proxy which buffers streams)
   // Token passed as ?token= query param since EventSource cannot set headers.
   LOGS_STREAM:      (uid: string) => `${API_BASE}/api/v1/contracts/${uid}/logs/stream`,

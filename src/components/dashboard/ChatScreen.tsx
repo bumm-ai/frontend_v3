@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { HeaderWalletButton } from '../ui/HeaderWalletButton';
 import { HeaderCreditsButton } from '../ui/HeaderCreditsButton';
+import { HeaderSubscriptionButton } from '../ui/HeaderSubscriptionButton';
 import { Navigation } from '../ui/Navigation';
 import { InfoPanel } from '../ui/InfoPanel';
 import { DashboardFooter } from '../ui/DashboardFooter';
@@ -19,7 +20,7 @@ import { explorerAddressUrl } from '@/lib/explorer';
 import { MarkdownMessage } from '../chat/MarkdownMessage';
 import { ProposedActionCard } from '../ui/ProposedActionCard';
 import { RegenConfirmCard } from '../ui/RegenConfirmCard';
-import { DeployConfirmCard } from '../ui/DeployConfirmCard';
+import { FundDeployCard } from '../ui/FundDeployCard';
 import { RunningSpend } from '../ui/RunningSpend';
 import { BuildQueueChip } from '../ui/BuildQueueChip';
 import { useBuildQueue } from '@/hooks/useBuildQueue';
@@ -508,12 +509,23 @@ export default function ChatScreen({
     }
   };
 
-  // Run the actual deploy once the user confirms the inline card.
-  const handleConfirmDeploy = async () => {
-    setDeployConfirmOpen(false);
+  // Test-net deploy path: free airdrop, server-paid — resume via onStartStep.
+  // (Mainnet fund-first is handled inside FundDeployCard, which signs the SOL
+  // transfer and POSTs the funding signature to /fund-deploy directly.)
+  const handleTestnetDeploy = async () => {
     if (currentProject?.bummUid && onStartStep) {
       try { await onStartStep('deploy'); } catch {}
     }
+    setDeployConfirmOpen(false);
+  };
+
+  // After a mainnet fund-first hand-off, close the card and note it in chat.
+  const handleFundedDeploy = (lamports: number) => {
+    setDeployConfirmOpen(false);
+    const sol = lamports / 1_000_000_000;
+    onAddAIMessage?.(
+      `**Deploy funded** — sent ${sol.toFixed(4)} SOL to the deployer wallet. Publishing now; you'll own the program's upgrade authority.`,
+    );
   };
 
   // effectiveButtonState: buttonStateProp already includes loader state from deriveUIFromStatus.
@@ -573,6 +585,7 @@ export default function ChatScreen({
         </div>
         
         <div className="flex items-center gap-3">
+          <HeaderSubscriptionButton />
           <HeaderCreditsButton />
           <HeaderWalletButton />
         </div>
@@ -809,11 +822,13 @@ export default function ChatScreen({
           </div>
         )}
 
-        {deployConfirmOpen && (
-          <DeployConfirmCard
+        {deployConfirmOpen && currentProject?.bummUid && (
+          <FundDeployCard
+            uid={currentProject.bummUid}
             network={contractStatus?.deploy_network}
             isUpgrade={effectiveButtonState === 'upgrade'}
-            onConfirm={handleConfirmDeploy}
+            onTestnetDeploy={handleTestnetDeploy}
+            onFunded={handleFundedDeploy}
             onCancel={() => setDeployConfirmOpen(false)}
           />
         )}
@@ -1090,11 +1105,13 @@ export default function ChatScreen({
               </div>
             )}
 
-            {deployConfirmOpen && (
-              <DeployConfirmCard
+            {deployConfirmOpen && currentProject?.bummUid && (
+              <FundDeployCard
+                uid={currentProject.bummUid}
                 network={contractStatus?.deploy_network}
                 isUpgrade={effectiveButtonState === 'upgrade'}
-                onConfirm={handleConfirmDeploy}
+                onTestnetDeploy={handleTestnetDeploy}
+                onFunded={handleFundedDeploy}
                 onCancel={() => setDeployConfirmOpen(false)}
               />
             )}
