@@ -494,7 +494,9 @@ export default function ChatScreen({
         actionButtonState === 'review'   ? 'build'  :
         actionButtonState === 'audit'    ? 'audit'  :
         actionButtonState === 'publish'  ? 'deploy' :
-        actionButtonState === 'upgrade'  ? 'deploy' : null;
+        // 'upgrade' (deployed state) no longer redeploys — SmartActionButton
+        // intercepts that click and opens the on-chain Contract Actions panel.
+        null;
       // Deploy is irreversible and spends real SOL — gate it behind an inline
       // confirm card (fe-07) instead of firing immediately. Build/audit run
       // straight through.

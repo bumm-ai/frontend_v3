@@ -17,6 +17,7 @@ import type { ContractIdlResponse } from '@/lib/api';
 import { resolveProgramId } from '@/lib/anchorIx';
 import { buildExplorerUrl } from '@/lib/explorer';
 import { InstructionActionForm } from './InstructionActionForm';
+import { NativeProgramActions } from './NativeProgramActions';
 
 interface ContractActionsPanelProps {
   /** Contract UID used to fetch the IDL. */
@@ -196,11 +197,12 @@ export function ContractActionsPanel({
           )}
 
           {!loading && !error && (!data || data.idl === null) && (
-            <div className="text-center py-8 text-gray-400 text-sm">
+            <div className="text-center py-6 text-gray-400 text-sm">
               <p>No IDL available for this contract.</p>
               <p className="text-[11px] text-gray-500 mt-1">
-                The build produced no IDL — only the program info above is
-                available.
+                The build produced no IDL, so its individual instructions can&apos;t
+                be called from here. The program-management actions below still
+                work.
               </p>
             </div>
           )}
@@ -237,6 +239,20 @@ export function ContractActionsPanel({
                 </div>
               )}
             </>
+          )}
+
+          {/* Native program-management actions — work with or without an IDL
+              (they target the BPF Upgradeable Loader, not the program's own
+              instructions). Shown whenever we can resolve the program id. */}
+          {!loading && programId && (
+            <div className="pt-1 border-t border-[#2a2a2a]">
+              <div className="pt-3">
+                <NativeProgramActions
+                  programId={programId}
+                  network={effectiveNetwork}
+                />
+              </div>
+            </div>
           )}
         </div>
       </div>

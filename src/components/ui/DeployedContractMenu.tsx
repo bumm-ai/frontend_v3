@@ -3,13 +3,14 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { MoreVertical, FileSignature, Snowflake, Crown, Trash2, Wand2 } from 'lucide-react';
-import { ContractActionsPanel } from './ContractActionsPanel';
 
 interface DeployedContractMenuProps {
   isDeployed: boolean;
   contractAddress?: string;
   /** Contract UID — required to fetch the IDL for the Actions panel. */
   uid?: string;
+  /** Open the shared Contract Actions panel (owned by SmartActionButton). */
+  onOpenActions?: () => void;
   onSignature?: () => void;
   onFreeze?: () => void;
   onOwnership?: () => void;
@@ -18,15 +19,15 @@ interface DeployedContractMenuProps {
 
 export const DeployedContractMenu = ({
   isDeployed,
-  contractAddress,
+  contractAddress: _contractAddress,
   uid,
+  onOpenActions,
   onSignature,
   onFreeze,
   onOwnership,
   onDestroy
 }: DeployedContractMenuProps) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [showActions, setShowActions] = useState(false);
 
   // If contract is not deployed, don't show menu
   if (!isDeployed) {
@@ -38,7 +39,7 @@ export const DeployedContractMenu = ({
       id: 'actions',
       label: 'Actions',
       icon: Wand2,
-      action: uid ? () => setShowActions(true) : undefined,
+      action: uid ? onOpenActions : undefined,
       color: 'text-gray-400 hover:text-white hover:bg-[#333]'
     },
     {
@@ -127,14 +128,6 @@ export const DeployedContractMenu = ({
           </>
         )}
       </AnimatePresence>
-
-      {showActions && uid && (
-        <ContractActionsPanel
-          uid={uid}
-          contractAddress={contractAddress}
-          onClose={() => setShowActions(false)}
-        />
-      )}
     </div>
   );
 };

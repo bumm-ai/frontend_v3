@@ -1,9 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Rocket, Eye, Loader2, RefreshCw, Shield } from 'lucide-react';
+import { Rocket, Eye, Loader2, Settings2, Shield } from 'lucide-react';
 import { ActionButtonState } from '@/types/dashboard';
 import { DeployedContractMenu } from './DeployedContractMenu';
+import { ContractActionsPanel } from './ContractActionsPanel';
 import { OperationCost } from './OperationCost';
 
 interface SmartActionButtonProps {
@@ -87,9 +89,12 @@ export const SmartActionButton = ({
           disabled: true
         };
       case 'upgrade':
+        // Post-deploy the program's upgrade authority belongs to the user's
+        // wallet, so the server can no longer "upgrade" it. This button now
+        // opens the on-chain Contract Actions panel instead of redeploying.
         return {
-          text: 'Upgrade',
-          icon: RefreshCw,
+          text: 'Manage',
+          icon: Settings2,
           className: 'bg-blue-600 text-white hover:bg-blue-700',
           disabled: false
         };
@@ -103,9 +108,21 @@ export const SmartActionButton = ({
     }
   };
 
+  const [showActions, setShowActions] = useState(false);
+
   const config = getButtonConfig();
   const Icon = config.icon;
   const isDisabled = disabled || config.disabled;
+
+  // The deployed-state button opens the on-chain actions panel; every other
+  // state runs its pipeline step via the parent onClick.
+  const handleMainClick = () => {
+    if (state === 'upgrade') {
+      if (uid) setShowActions(true);
+      return;
+    }
+    onClick();
+  };
 
   const handleContractAction = (action: string) => {
     console.log(`Contract action: ${action} for ${contractAddress}`);
@@ -138,7 +155,7 @@ export const SmartActionButton = ({
       )}
       
       <motion.button
-        onClick={isDisabled ? undefined : onClick}
+        onClick={isDisabled ? undefined : handleMainClick}
         className={`
           flex items-center justify-center gap-2 px-3 py-2 rounded-md text-xs font-medium transition-all
           ${config.className}
@@ -164,11 +181,22 @@ export const SmartActionButton = ({
         isDeployed={isDeployed}
         contractAddress={contractAddress}
         uid={uid}
+        onOpenActions={uid ? () => setShowActions(true) : undefined}
         onSignature={() => handleContractAction('signature')}
         onFreeze={() => handleContractAction('freeze')}
         onOwnership={() => handleContractAction('ownership')}
         onDestroy={() => handleContractAction('destroy')}
       />
+
+      {/* Single on-chain Contract Actions panel — opened by the main "Manage"
+          button and by the kebab menu's Actions item. */}
+      {showActions && uid && (
+        <ContractActionsPanel
+          uid={uid}
+          contractAddress={contractAddress}
+          onClose={() => setShowActions(false)}
+        />
+      )}
     </div>
   );
 };
