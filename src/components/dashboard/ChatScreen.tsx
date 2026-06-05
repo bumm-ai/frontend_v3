@@ -926,6 +926,7 @@ export default function ChatScreen({
                 disabled={isBuilding || editorDirty}
                 isDeployed={isContractDeployed}
                 contractAddress={deployedContractAddress}
+                uid={currentProject?.uid}
                 isFrozen={contractIsFrozen}
                 onContractFreeze={handleContractFreeze}
               />
@@ -1178,6 +1179,7 @@ export default function ChatScreen({
                     disabled={isBuilding || editorDirty}
                     isDeployed={isContractDeployed}
                     contractAddress={deployedContractAddress}
+                    uid={currentProject?.uid}
                     isFrozen={contractIsFrozen}
                     onContractFreeze={handleContractFreeze}
                   />

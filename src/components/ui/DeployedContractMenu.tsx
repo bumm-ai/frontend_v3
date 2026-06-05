@@ -2,26 +2,31 @@
 
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { MoreVertical, FileSignature, Snowflake, Crown, Trash2 } from 'lucide-react';
+import { MoreVertical, FileSignature, Snowflake, Crown, Trash2, Wand2 } from 'lucide-react';
+import { ContractActionsPanel } from './ContractActionsPanel';
 
 interface DeployedContractMenuProps {
   isDeployed: boolean;
   contractAddress?: string;
+  /** Contract UID — required to fetch the IDL for the Actions panel. */
+  uid?: string;
   onSignature?: () => void;
   onFreeze?: () => void;
   onOwnership?: () => void;
   onDestroy?: () => void;
 }
 
-export const DeployedContractMenu = ({ 
-  isDeployed, 
+export const DeployedContractMenu = ({
+  isDeployed,
   contractAddress,
+  uid,
   onSignature,
   onFreeze,
   onOwnership,
-  onDestroy 
+  onDestroy
 }: DeployedContractMenuProps) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [showActions, setShowActions] = useState(false);
 
   // If contract is not deployed, don't show menu
   if (!isDeployed) {
@@ -29,6 +34,13 @@ export const DeployedContractMenu = ({
   }
 
   const menuItems = [
+    {
+      id: 'actions',
+      label: 'Actions',
+      icon: Wand2,
+      action: uid ? () => setShowActions(true) : undefined,
+      color: 'text-gray-400 hover:text-white hover:bg-[#333]'
+    },
     {
       id: 'signature',
       label: 'Signature',
@@ -115,6 +127,14 @@ export const DeployedContractMenu = ({
           </>
         )}
       </AnimatePresence>
+
+      {showActions && uid && (
+        <ContractActionsPanel
+          uid={uid}
+          contractAddress={contractAddress}
+          onClose={() => setShowActions(false)}
+        />
+      )}
     </div>
   );
 };

@@ -18,3 +18,18 @@ export function explorerAddressUrl(
   const param = cluster === 'mainnet-beta' ? '' : `?cluster=${cluster}`;
   return `https://explorer.solana.com/address/${address}${param}`;
 }
+
+/**
+ * Solana Explorer URL for either an address/program or a transaction signature,
+ * on the given network. Shares cluster-param logic with {@link explorerAddressUrl}
+ * (mainnet-beta is the Explorer default, so its param is omitted).
+ */
+export function buildExplorerUrl(
+  kind: 'address' | 'tx',
+  value: string,
+  network?: Network | string | null,
+): string {
+  const cluster = network || 'devnet';
+  const param = cluster === 'mainnet-beta' ? '' : `?cluster=${cluster}`;
+  return `https://explorer.solana.com/${kind}/${value}${param}`;
+}

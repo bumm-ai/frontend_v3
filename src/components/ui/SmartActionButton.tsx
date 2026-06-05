@@ -12,6 +12,8 @@ interface SmartActionButtonProps {
   disabled?: boolean;
   isDeployed?: boolean;
   contractAddress?: string;
+  /** Contract UID — threaded to the deployed-contract Actions panel (IDL fetch). */
+  uid?: string;
   isFrozen?: boolean;
   onContractFreeze?: () => void;
 }
@@ -22,6 +24,7 @@ export const SmartActionButton = ({
   disabled = false, 
   isDeployed = false,
   contractAddress,
+  uid,
   isFrozen = false,
   onContractFreeze
 }: SmartActionButtonProps) => {
@@ -160,6 +163,7 @@ export const SmartActionButton = ({
       <DeployedContractMenu
         isDeployed={isDeployed}
         contractAddress={contractAddress}
+        uid={uid}
         onSignature={() => handleContractAction('signature')}
         onFreeze={() => handleContractAction('freeze')}
         onOwnership={() => handleContractAction('ownership')}
