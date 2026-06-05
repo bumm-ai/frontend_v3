@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: typecheck · lint · test · build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install deps
+        run: npm ci
+      - name: Typecheck (tsc)
+        run: npx tsc --noEmit
+      - name: Lint (eslint)
+        run: npm run lint
+      - name: Unit tests (vitest)
+        run: npm test
+      - name: Production build
+        # Type-checks the whole app again + verifies the bundle compiles.
+        run: npm run build
+        env:
+          # The build only needs these to be defined; values are not used at
+          # build time (all backend calls are client-side at runtime).
+          NEXT_PUBLIC_API_URL: https://api.bumm.io
+          NEXT_PUBLIC_WS_URL: wss://api.bumm.io
