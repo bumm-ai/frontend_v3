@@ -266,6 +266,20 @@ describe('deriveUIFromStatus — OPTIMISTIC pendingStep override', () => {
     expect(result.animationStage).toBe('deploying');
   });
 
+  it('pendingStep=build on a paused_degraded status → building', () => {
+    // Approve-regen / apply-proposal scenario: the pipeline auto-paused
+    // (paused_degraded is terminal for streaming), the user approved a regen,
+    // and we trigger the rebuild. The optimistic override must pull the UI out
+    // of the frozen paused snapshot into the building animation immediately.
+    const result = deriveUIFromStatus(
+      status({ phase: 'paused_degraded', build_ok: false }),
+      true,
+      'build',
+    );
+    expect(result.buttonState).toBe('building');
+    expect(result.animationStage).toBe('building');
+  });
+
   it('pendingStep=build but build_ok=true → NO override (step already done)', () => {
     const result = deriveUIFromStatus(
       status({ phase: 'done', build_ok: true }),

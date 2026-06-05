@@ -891,6 +891,32 @@ export default function Dashboard() {
     [auth.isAuthenticated, contract],
   );
 
+  // ── Shared re-arm — revive every status mechanism before triggering a step.
+  // After a terminal phase (failed / paused_degraded / done) the WS stream,
+  // the useMultiContract subscription, and the Dashboard REST poll all abandon
+  // the contract. Any path that then triggers a build/audit/deploy on the SAME
+  // contract (retry-deploy, approve-regen, regenerate-with-feedback, apply-
+  // proposal, save-and-rebuild, the action button itself) must re-arm them, or
+  // the backend runs the step while the UI stays frozen on the stale terminal
+  // snapshot. This is the single place that does it:
+  //   • pendingStep   → optimistic loader immediately (no dead-zone / double-click)
+  //   • activeContractUid → point the single-WS hook at this contract
+  //   • drop stale projectStatuses[projectUid] so it can't out-prioritise live status
+  //   • trackedContracts → re-subscribe useMultiContract + resume Dashboard poll
+  //   • streamNonce    → force useContractStream to re-subscribe its WS + poll
+  //                      (revives the contract.status transition effects)
+  const rearmTracking = useCallback(
+    (contractUid: string, step: 'build' | 'audit' | 'deploy') => {
+      const projectUid = currentProjectRef.current?.uid ?? contractUid;
+      setActiveContractUid(contractUid);
+      setPendingStep({ projectId: projectUid, step });
+      setProjectStatuses(prev => { const n = { ...prev }; delete n[projectUid]; return n; });
+      setTrackedContracts(prev => ({ ...prev, [projectUid]: contractUid }));
+      setStreamNonce(n => n + 1);
+    },
+    [],
+  );
+
   // ── Step trigger — fire-and-forget (no local state mirrors) ─────────────
   // All completion handling is done by the transition effect watching contract.status.
   const handleStartStep = useCallback(
@@ -915,13 +941,8 @@ export default function Dashboard() {
         return;
       }
 
-      // Immediately show loader — no waiting for WS heartbeat
-      setPendingStep({ projectId: currentProject!.uid, step });
-      // Ensure WS is connected to this project
-      setActiveContractUid(uid);
-      if (currentProject) {
-        setTrackedContracts(prev => ({ ...prev, [currentProject.uid]: uid }));
-      }
+      // Immediately show loader + revive all status streams (no WS-heartbeat wait).
+      rearmTracking(uid, step);
       try {
         await tryRefresh();
         if (step === 'build')  await apiClient.triggerBuild(uid);
@@ -957,7 +978,7 @@ export default function Dashboard() {
       // Trigger build only after save succeeds; failure here is non-fatal
       // for the save itself — user can retry build from the action button.
       try {
-        setActiveContractUid(uid);
+        rearmTracking(uid, 'build');
         await apiClient.triggerBuild(uid);
         addAIMessage('Code saved (v↑) — rebuilding…');
       } catch (err) {
@@ -979,27 +1000,13 @@ export default function Dashboard() {
   // No regenerate / rebuild needed: the .so is still in /builds/_cache.
   const handleRetryDeploy = useCallback(
     async (uid: string) => {
-      // Re-arm every status mechanism BEFORE the POST. After the prior deploy
-      // failed (terminal phase), all three abandoned this contract:
-      // useContractStream tore down its WS+poll, useMultiContract dropped its
-      // subscription, and the Dashboard REST poll removed it from
-      // trackedContracts. Without re-arming, the backend re-runs the deploy
-      // (rearm_failed_deploy) but the UI stays frozen on the failed snapshot —
-      // the user sees nothing, clicks again, and hits a 409. So we:
-      //   • set pendingStep='deploy' → deriveUIFromStatus shows 'publishing'
-      //     immediately (no dead-zone, the Retry button disappears → no 2nd click)
-      //   • re-add to trackedContracts → revives useMultiContract WS + Dashboard
-      //     poll, which overwrite the stale projectStatuses with live status
-      //   • drop the stale projectStatuses[uid]=failed so it can't out-prioritise
-      //     the incoming live status (it beats contract.status in `activeStatus`)
-      //   • bump streamNonce → useContractStream re-subscribes so the
-      //     contract.status transition effect ([E]) posts the deploy-success
-      //     message and marks the project deployed.
-      setActiveContractUid(uid);
-      setPendingStep({ projectId: uid, step: 'deploy' });
-      setProjectStatuses(prev => { const n = { ...prev }; delete n[uid]; return n; });
-      setTrackedContracts(prev => ({ ...prev, [uid]: uid }));
-      setStreamNonce(n => n + 1);
+      // Re-arm every status mechanism BEFORE the POST: after the prior deploy
+      // failed (terminal phase) the streams abandoned this contract, so the
+      // backend re-runs the deploy (rearm_failed_deploy) but the UI stays
+      // frozen on the failed snapshot — the user sees nothing, clicks again,
+      // and hits a 409. rearmTracking shows the deploy loader immediately and
+      // revives the live status streams.
+      rearmTracking(uid, 'deploy');
       try {
         await tryRefresh();
         await apiClient.triggerDeploy(uid);
@@ -1044,7 +1051,7 @@ export default function Dashboard() {
         throw err;
       }
       try {
-        setActiveContractUid(uid);
+        rearmTracking(uid, 'build');
         await apiClient.triggerBuild(uid);
       } catch (err) {
         addAIMessage(
@@ -1089,7 +1096,7 @@ export default function Dashboard() {
         throw err;
       }
       try {
-        setActiveContractUid(uid);
+        rearmTracking(uid, 'build');
         await apiClient.triggerBuild(uid);
       } catch (err) {
         addAIMessage(
@@ -1136,8 +1143,10 @@ export default function Dashboard() {
         const result = await apiClient.applyChatProposal(uid, logUid);
         updateProposalStatus(messageId, 'applied');
         // /apply already wired the regenerate; kick off the build so the user
-        // sees the next pipeline phase animate without a manual click.
-        setActiveContractUid(uid);
+        // sees the next pipeline phase animate without a manual click. Re-arm
+        // the status streams first — the contract was on a terminal phase
+        // (paused_degraded / failed) so they were all torn down.
+        rearmTracking(uid, 'build');
         try {
           await apiClient.triggerBuild(uid);
         } catch (err) {
