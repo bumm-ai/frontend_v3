@@ -149,8 +149,9 @@ export const FundDeployCard = ({
             {isUpgrade ? 'Confirm re-deploy?' : 'Confirm publish?'}
           </div>
           <div className="mt-0.5 text-sm font-medium text-emerald-50">
-            This deploys to Solana <span className="font-semibold">{net}</span> and is
-            irreversible.
+            This deploys your program to Solana <span className="font-semibold">{net}</span>.
+            You&apos;ll hold the upgrade authority — you can upgrade, transfer, or close it
+            afterwards.
           </div>
           {loading ? (
             <div className="mt-1 flex items-center gap-1.5 text-[11px] text-neutral-400">
@@ -160,7 +161,8 @@ export const FundDeployCard = ({
             <div className="mt-1 text-[11px] text-neutral-300">
               You pay <span className="font-semibold text-emerald-200">{sol.toFixed(4)} SOL</span>
               {estimate?.estimated_usd ? ` (~$${estimate.estimated_usd})` : ''} from your wallet to
-              deploy — and you own the program&apos;s upgrade authority immediately.
+              deploy — and you own the program&apos;s upgrade authority immediately. Most of
+              it is a refundable rent deposit you can reclaim later by closing the program.
               {estimate?.user_sol_balance != null && (
                 <span className="ml-1 text-neutral-500">
                   Balance: {estimate.user_sol_balance.toFixed(4)} SOL.

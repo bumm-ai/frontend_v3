@@ -54,11 +54,13 @@ export const DeployConfirmCard = ({
             {isUpgrade ? 'Confirm re-deploy?' : 'Confirm publish?'}
           </div>
           <div className="mt-0.5 text-sm font-medium text-emerald-50">
-            This deploys to Solana <span className="font-semibold">{net}</span> and
-            spends real SOL. It is irreversible.
+            This deploys your program to Solana <span className="font-semibold">{net}</span>.
+            You&apos;ll hold the upgrade authority — you can upgrade or transfer it afterwards.
           </div>
           <div className="mt-1 text-[11px] text-neutral-400">
-            The estimated network fee is shown in the chat above.
+            Most of the SOL is a refundable rent deposit — reclaim it any time by
+            closing the program (Manage → Close program). The estimated network fee
+            is shown in the chat above.
           </div>
         </div>
       </div>
