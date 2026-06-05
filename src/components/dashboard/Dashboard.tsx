@@ -24,6 +24,18 @@ import type { Network } from '@/lib/api';
 import { explorerAddressUrl } from '@/lib/explorer';
 import { useChatPersistence } from '@/hooks/useChatPersistence';
 import { SCRATCH_UID, mapPhaseToStatus } from './dashboardHelpers';
+import {
+  phaseStatusLabel,
+  shouldClearPendingStep,
+  appliedFixMessage,
+  filterPipelineNoise,
+  deriveEarlyName,
+  buildSuccessMessage,
+  auditCompleteMessage,
+  buildFailedMessage,
+  type FixItem,
+  type VulnItem,
+} from './contractTransitions';
 
 export default function Dashboard() {
   const { disconnect } = useWallet();
@@ -303,55 +315,13 @@ export default function Dashboard() {
     prevStatusRef.current = curr;
 
     // [0] Clear pendingStep once backend confirms the step is active or complete
-    const pendingEntry = pendingStepRef.current;
-    const pending = pendingEntry?.step ?? null;
-    if (pending === 'build' && (curr.build_ok ||
-        curr.phase === 'building' || curr.phase === 'build_fixing' || curr.phase === 'learning')) {
-      setPendingStep(null);
-    }
-    if (pending === 'audit' && (curr.audit_ok ||
-        curr.phase === 'auditing_static' || curr.phase === 'auditing_llm' || curr.phase === 'audit_fixing')) {
-      setPendingStep(null);
-    }
-    if (pending === 'deploy' && (!!curr.program_id || curr.phase === 'deploying')) {
-      setPendingStep(null);
-    }
-    if (
-      curr.phase === 'done' ||
-      curr.phase === 'failed' ||
-      curr.phase === 'cancelled' ||
-      curr.phase === 'paused_degraded'
-    ) setPendingStep(null);
+    const pending = pendingStepRef.current?.step ?? null;
+    if (shouldClearPendingStep(pending, curr)) setPendingStep(null);
 
     // [A] Generate phase: update status message in chat while generating
     if (pipelineMsgId) {
-      const phaseLabels: Record<string, string> = {
-        pending:          '⏳ Queued — waiting for worker...',
-        enriching:        '🔍 Analyzing your request...',
-        generating:       '⚡ Generating Solana smart contract...',
-        generated:        '📋 Code ready — click Build to compile.',
-        building:         '🔧 Building with Anchor framework...',
-        build_fixing: (() => {
-          const count = curr.build_errors_count ?? 0;
-          const errorDesc = humanizeErrorCodes(curr.top_error_codes ?? []);
-          const attempt = curr.build_attempt ?? 1;
-          const base = count > 0
-            ? `🔧 Auto-fixing ${count} error${count > 1 ? 's' : ''} (attempt ${attempt})…`
-            : `🔧 Fixing build errors (attempt ${attempt})…`;
-          return errorDesc ? `${base}\n${errorDesc}` : base;
-        })(),
-        auditing_static:  '🔒 Running static security audit...',
-        auditing_llm:     '🔒 Running AI security review...',
-        audit_fixing:     '🔒 Fixing security issues...',
-        deploying:        '🚀 Deploying to devnet...',
-        learning:         '🧠 Updating knowledge base...',
-        done:             '✅ Contract deployed!',
-        failed:           `❌ Pipeline failed: ${curr.error ?? 'Unknown error'}`,
-      };
       setMessages(prev => prev.map(m =>
-        m.id === pipelineMsgId
-          ? { ...m, content: phaseLabels[curr.phase] ?? `⚙️ ${curr.phase}...` }
-          : m
+        m.id === pipelineMsgId ? { ...m, content: phaseStatusLabel(curr) } : m
       ));
     }
 
@@ -364,13 +334,7 @@ export default function Dashboard() {
       curr.last_fix_description !== prev?.last_fix_description &&
       activeContractUid
     ) {
-      const source = curr.last_fix_source === 'knowledge_base' ? ' _(KB)_' : curr.last_fix_source === 'llm_generated' ? ' _(AI)_' : '';
-      const errorDesc = humanizeErrorCodes(curr.top_error_codes ?? []);
-      const desc = curr.last_fix_description.replace(/^hard_rule:\s*/i, '').slice(0, 180);
-      addAIMessageForProject(
-        activeContractUid,
-        `🔧 **Applied fix${source}:** ${desc}${errorDesc ? `\n_Errors: ${errorDesc}_` : ''}`,
-      );
+      addAIMessageForProject(activeContractUid, appliedFixMessage(curr));
     }
 
     // [B] Generate complete: next_step just became 'build'
@@ -384,16 +348,8 @@ export default function Dashboard() {
       projectCreatedRef.current = uid;
 
       // Build early project shell so sidebar shows immediately
-      const chatSnapshot = messages.filter(m =>
-        !m.content.startsWith('⏳') && !m.content.startsWith('⚙️') &&
-        !m.content.startsWith('🔍') && !m.content.startsWith('⚡') &&
-        !m.content.startsWith('🔧') && !m.content.startsWith('🔒') &&
-        !m.content.startsWith('🚀') && !m.content.startsWith('🧠')
-      );
-      const firstUserMsg = chatSnapshot.find(m => m.isUser);
-      const earlyName = firstUserMsg
-        ? firstUserMsg.content.slice(0, 40) + (firstUserMsg.content.length > 40 ? '...' : '')
-        : `Contract ${uid.slice(0, 8)}`;
+      const chatSnapshot = filterPipelineNoise(messages);
+      const earlyName = deriveEarlyName(chatSnapshot, uid);
 
       const earlyProject: Project = {
         uid,
@@ -460,53 +416,9 @@ export default function Dashboard() {
       // Fetch fixes and refresh code in background
       (async () => {
         const attempts = curr.build_attempt ?? 1;
-        const fixed = Math.max(0, attempts - 1);
         try {
           const data = await apiClient.getContractFixes(uid);
-          type FixItem = {
-            fix_description?: string;
-            error_pattern?: string;
-            source?: string;
-            was_successful?: boolean | null;
-          };
-          const fixes: FixItem[] = (data.fixes || []).filter(
-            (f: FixItem) => f.was_successful !== false
-          );
-          if (fixes.length > 0) {
-            // Group by source: KB hits vs LLM-generated
-            const kbCount = fixes.filter(f => f.source === 'knowledge_base').length;
-            const llmCount = fixes.length - kbCount;
-
-            const lines = fixes.slice(0, 8).map((f, i) => {
-              const pattern = (f.error_pattern || 'compile error').replace(/\n/g, ' ').slice(0, 80);
-              const desc = (f.fix_description || '').replace(/\n/g, ' ').slice(0, 200);
-              const tag = f.source === 'knowledge_base' ? '_(from KB)_' : '_(LLM)_';
-              return `${i + 1}. \`${pattern}\` → ${desc} ${tag}`;
-            }).join('\n');
-
-            const sourceBreakdown =
-              kbCount > 0 && llmCount > 0
-                ? ` (${kbCount} from KB, ${llmCount} LLM-generated)`
-                : kbCount > 0
-                ? ' (all from KB)'
-                : ' (all LLM-generated)';
-
-            addAIMessageForProject(
-              uid,
-              `**Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}.\n\n` +
-              `**Auto-fixed ${fixes.length} compile error${fixes.length === 1 ? '' : 's'}**${sourceBreakdown}:\n\n` +
-              `${lines}` +
-              `${fixes.length > 8 ? `\n\n_…and ${fixes.length - 8} more._` : ''}\n\n` +
-              `Contract compiles cleanly. Click **Audit** to run security checks.`
-            );
-          } else {
-            addAIMessageForProject(
-              uid,
-              fixed > 0
-                ? `**Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Auto-fixed ${fixed} compile error${fixed > 1 ? 's' : ''}.\n\nContract compiles cleanly. Click **Audit** to run security checks.`
-                : `**Build succeeded on the first attempt** — contract compiles cleanly with no errors.\n\nClick **Audit** to run security checks.`
-            );
-          }
+          addAIMessageForProject(uid, buildSuccessMessage(attempts, (data.fixes || []) as FixItem[]));
         } catch {
           addAIMessageForProject(uid, `**Build succeeded** after ${attempts} attempt${attempts > 1 ? 's' : ''}. Click **Audit** to continue.`);
         }
@@ -540,92 +452,14 @@ export default function Dashboard() {
             apiClient.getContractFixes(uid).catch(() => ({ fixes: [] })),
             apiClient.getDeployEstimate(uid).catch(() => null),
           ]);
-          type Vuln = {
-            severity?: string;
-            category?: string;
-            title?: string;
-            description?: string;
-            suggested_fix?: string | null;
-            code_location?: string | null;
-            source?: string;
-          };
-          const vulns: Vuln[] = auditData.vulns || [];
+          const vulns = (auditData.vulns || []) as VulnItem[];
           const attempts = curr.audit_attempt ?? 1;
           const buildFixCount = ((fixesData?.fixes || []) as Array<{ was_successful?: boolean | null }>)
             .filter(f => f.was_successful !== false).length;
-
-          // Network-fee forecast (from the deploy-estimate simulation). Shown
-          // right before the Publish CTA so the user knows the cost up front.
-          // Empty string when the estimate is unavailable — never blocks the
-          // audit summary.
-          const deployLine = deployEst
-            ? `\n\n**Estimated deploy cost:** ~${deployEst.estimated_sol.toFixed(4)} SOL network fee` +
-              ` (~${deployEst.estimated_credits} credit${deployEst.estimated_credits === 1 ? '' : 's'})` +
-              ` on Solana ${deployEst.network}.` +
-              (deployEst.sufficient === false
-                ? ` _Balance is short by ${deployEst.missing_credits} credit${deployEst.missing_credits === 1 ? '' : 's'} — top up before publishing._`
-                : '')
-            : '';
-
-          if (vulns.length === 0) {
-            addAIMessageForProject(
-              uid,
-              `**Audit passed on the first try** — no security issues found.\n\n` +
-              `**Final state before deploy:**\n` +
-              `- Static analysis: clippy + cargo audit passed\n` +
-              `- AI security review: passed\n` +
-              `${buildFixCount > 0 ? `- Build fixes applied earlier: ${buildFixCount}\n` : ''}` +
-              `\nContract is ready to deploy.${deployLine}\n\nClick **Publish** to deploy to Solana devnet.`
-            );
-          } else {
-            // Group vulnerabilities by severity
-            const SEV_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
-            const SEV_LABELS: Record<string, string> = {
-              critical: 'CRITICAL',
-              high:     'HIGH',
-              medium:   'MEDIUM',
-              low:      'LOW',
-              info:     'INFO',
-            };
-            const grouped: Record<string, Vuln[]> = {};
-            for (const v of vulns) {
-              const sev = (v.severity || 'info').toLowerCase();
-              if (!grouped[sev]) grouped[sev] = [];
-              grouped[sev].push(v);
-            }
-
-            const sections: string[] = [];
-            for (const sev of SEV_ORDER) {
-              const items = grouped[sev];
-              if (!items || items.length === 0) continue;
-              const label = SEV_LABELS[sev] || sev.toUpperCase();
-              const lines = items.slice(0, 5).map((v, i) => {
-                const title = (v.title || 'Finding').replace(/\n/g, ' ').slice(0, 120);
-                const desc = (v.description || '').replace(/\n/g, ' ').slice(0, 220);
-                const fix = v.suggested_fix
-                  ? `\n  ↳ **Fix applied:** ${v.suggested_fix.replace(/\n/g, ' ').slice(0, 220)}`
-                  : '';
-                const loc = v.code_location ? ` _(at ${v.code_location})_` : '';
-                return `${i + 1}. **${title}**${loc}\n  ${desc}${fix}`;
-              }).join('\n\n');
-              const more = items.length > 5 ? `\n\n_…and ${items.length - 5} more in this severity._` : '';
-              sections.push(`**${label} (${items.length})**\n\n${lines}${more}`);
-            }
-
-            addAIMessageForProject(
-              uid,
-              `**Audit complete** after ${attempts} pass${attempts > 1 ? 'es' : ''} — ` +
-              `found and patched **${vulns.length}** issue${vulns.length === 1 ? '' : 's'}.\n\n` +
-              `**Vulnerabilities found and fixed:**\n\n` +
-              `${sections.join('\n\n')}\n\n` +
-              `**Final state before deploy:**\n` +
-              `${buildFixCount > 0 ? `- Compile-time fixes: **${buildFixCount}**\n` : ''}` +
-              `- Security fixes: **${vulns.length}**\n` +
-              `- Static analysis: clippy + cargo audit passed\n` +
-              `- AI security review: passed\n\n` +
-              `Contract is ready to deploy.${deployLine}\n\nClick **Publish** to deploy to Solana devnet.`
-            );
-          }
+          addAIMessageForProject(
+            uid,
+            auditCompleteMessage({ vulns, attempts, buildFixCount, deployEst }),
+          );
         } catch {
           addAIMessageForProject(uid, `**Audit complete.** Contract is ready for deployment. Click **Publish** to deploy.`);
         }
@@ -660,14 +494,7 @@ export default function Dashboard() {
     if (prev && curr.phase === 'failed' && prev.phase !== 'failed' && activeContractUid) {
       const errorDesc = humanizeErrorCodes(curr.top_error_codes ?? []);
       const rawError = curr.error ?? 'Unknown error';
-      // Show human-readable error description when available; raw error as fallback.
-      const userFacingError = errorDesc
-        ? `${errorDesc}\n\n_Technical detail: ${rawError.slice(0, 200)}_`
-        : rawError;
-      addAIMessageForProject(
-        activeContractUid,
-        `**Build failed after all auto-repair attempts.**\n\n${userFacingError}\n\nYou can edit the prompt and try again, or paste corrected code.`,
-      );
+      addAIMessageForProject(activeContractUid, buildFailedMessage(errorDesc, rawError));
       setPipelineMsgId(null);
     }
 
