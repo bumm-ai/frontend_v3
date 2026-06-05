@@ -22,60 +22,8 @@ import { WalletDisconnectedBanner } from '@/components/ui/WalletDisconnectedBann
 import { useWalletBanner } from '@/hooks/useWalletBanner';
 import type { Network } from '@/lib/api';
 import { explorerAddressUrl } from '@/lib/explorer';
-
-/**
- * Derive the action button label from backend contract state.
- * Pure function — no localStorage involved.
- */
-function phaseToAction(
-  status: Project['status'],
-  hasCode: boolean,
-  isDeployed?: boolean,
-): 'build' | 'audit' | 'publish' | 'upgrade' | 'inactive' {
-  if (isDeployed || status === 'deployed') return 'upgrade';
-  if (status === 'audited') return 'publish';
-  if (status === 'built') return 'audit';
-  if (hasCode || status === 'generated') return 'build';
-  return 'inactive';
-}
-
-/** Map backend pipeline phase to frontend project status.
- *
- * For terminal phases (`failed`, `paused_degraded`) we don't drop the
- * project to "draft" — instead we surface the highest milestone the
- * contract actually reached, so a user whose deploy failed mid-flight
- * still sees "Audited" and can retry publish without losing context.
- */
-function mapPhaseToStatus(
-  phase: string,
-  programId?: string | null,
-  buildOk?: boolean,
-  auditOk?: boolean,
-): Project['status'] {
-  // Terminal hard-success: program is on-chain regardless of phase value.
-  if (programId) return 'deployed';
-
-  switch (phase) {
-    case 'pending': case 'started': case 'enriching': return 'initializing';
-    case 'generating': return 'in-progress';
-    // 'generated' = paste-mode: code ready, awaiting build trigger
-    case 'generated': case 'building': case 'build_fixing': return 'generated';
-    case 'auditing_static': case 'auditing_llm': case 'audit_fixing': return 'built';
-    case 'deploying': return 'audited';
-    case 'done':
-      return 'completed';
-    case 'failed':
-    case 'paused_degraded':
-    case 'cancelled': {
-      // Reflect the highest milestone the contract actually reached so the
-      // user has correct context (e.g. "Audited" → can retry publish).
-      if (auditOk) return 'audited';
-      if (buildOk) return 'built';
-      return 'draft';
-    }
-    default: return 'in-progress';
-  }
-}
+import { useChatPersistence } from '@/hooks/useChatPersistence';
+import { SCRATCH_UID, mapPhaseToStatus } from './dashboardHelpers';
 
 export default function Dashboard() {
   const { disconnect } = useWallet();
@@ -162,7 +110,6 @@ export default function Dashboard() {
   const [messagesByUid, setMessagesByUid] = useState<Record<string, ChatMessage[]>>({});
 
   // Key used for the "new chat" scratch buffer — no project selected yet.
-  const SCRATCH_UID = '__scratch__';
 
   const _WELCOME_MSG: ChatMessage = {
     id: 'welcome',
@@ -224,65 +171,8 @@ export default function Dashboard() {
   // Step triggering state removed — button/animation derive from contract.status
   // via deriveUIFromStatus (no local mirrors needed).
 
-  // Persist every project's messages to localStorage on change.
-  // This is a write-only cache: cold-start reads happen in handleSelectProject.
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    for (const [uid, msgs] of Object.entries(messagesByUid)) {
-      if (msgs.length > 0) {
-        try {
-          localStorage.setItem(`bumm_chat_history_${uid}`, JSON.stringify(msgs));
-        } catch {
-          // Storage full — non-fatal
-        }
-      }
-    }
-  }, [messagesByUid]);
-
-  // ── Backend chat persistence ─────────────────────────────────────────────
-  // Mirror messagesByUid to the backend so build/audit/deploy progress
-  // messages survive logout/login. Without this, only the initial chat
-  // snapshot saved at project-create time persists — every "Build
-  // succeeded", "Audit complete", "Deploy failed" added later via
-  // addAIMessageForProject lives only in local state and disappears on
-  // sign-out. Per-project hash-guard avoids redundant PUTs when nothing
-  // changed; debounce coalesces bursts (e.g. multiple stage reports).
-  const lastSavedChatHashRef = useRef<Record<string, string>>({});
-  useEffect(() => {
-    if (!auth.isAuthenticated) return;
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    for (const [uid, msgs] of Object.entries(messagesByUid)) {
-      if (uid === SCRATCH_UID) continue;
-      if (!msgs || msgs.length === 0) continue;
-      // Cheap content hash — id + content length covers every additive
-      // change (most chat updates are appends; we don't edit history).
-      const hash = `${msgs.length}:${msgs.map(m => `${m.id}#${m.content.length}`).join('|')}`;
-      if (lastSavedChatHashRef.current[uid] === hash) continue;
-      const t = setTimeout(() => {
-        const chatForBackend = msgs.map(m => ({
-          role: m.isUser ? 'user' : 'assistant',
-          content: m.content,
-          timestamp:
-            m.timestamp instanceof Date
-              ? m.timestamp.toISOString()
-              : String(m.timestamp),
-        }));
-        apiClient
-          .saveContractChat(uid, chatForBackend)
-          .then(() => {
-            lastSavedChatHashRef.current[uid] = hash;
-          })
-          .catch(() => {
-            // Best-effort — leave hash un-set so we retry on next change.
-          });
-      }, 1500);
-      timers.push(t);
-    }
-    return () => {
-      for (const t of timers) clearTimeout(t);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messagesByUid, auth.isAuthenticated]);
+  // Persist per-project chat to localStorage + backend (extracted hook).
+  const { markPersisted } = useChatPersistence(messagesByUid, auth.isAuthenticated);
 
 
   // Auto-switch to chat when JWT session is restored or login completes
@@ -1488,10 +1378,7 @@ export default function Dashboard() {
           setMessagesByUid(prev => ({ ...prev, [project.uid]: loadedMessages }));
           // Pre-seed the save-hash so the auto-save effect doesn't immediately
           // PUT the same messages back to the backend on this cold load.
-          const initHash = `${loadedMessages.length}:${loadedMessages
-            .map(m => `${m.id}#${m.content.length}`)
-            .join('|')}`;
-          lastSavedChatHashRef.current[project.uid] = initHash;
+          markPersisted(project.uid, loadedMessages);
           return;
         }
       } catch (_) {
