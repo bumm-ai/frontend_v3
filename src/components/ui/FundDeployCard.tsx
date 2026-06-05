@@ -12,6 +12,7 @@ import {
   retryOnNotFinalized,
   LAMPORTS_PER_SOL,
 } from '@/lib/solanaPay';
+import { useSelfDeploy } from '@/hooks/useSelfDeploy';
 
 export interface FundDeployCardProps {
   /** Contract uid to deploy. */
@@ -52,6 +53,10 @@ export const FundDeployCard = ({
 }: FundDeployCardProps) => {
   const { connected, publicKey, sendTransaction } = useWallet();
   const { connection } = useConnection();
+  // Non-custodial deploy (RFC-013): when enabled + the wallet can batch-sign, the
+  // user deploys from their OWN wallet (sole + original owner). Default off → the
+  // existing fund-first / testnet paths below are unchanged.
+  const { selfDeploy, canSelfDeploy, progress: sdProgress } = useSelfDeploy();
 
   const [estimate, setEstimate] = useState<DeployEstimate | null>(null);
   const [loading, setLoading] = useState(true);
@@ -83,6 +88,13 @@ export const FundDeployCard = ({
     setError(null);
     setBusy(true);
     try {
+      // Non-custodial path (RFC-013): the user deploys from their own wallet and
+      // owns the program from block 0 — no custodial signer, on any network.
+      if (canSelfDeploy) {
+        await selfDeploy(uid);
+        onFunded?.(lamports);
+        return;
+      }
       if (!isMainnet) {
         // Test net — free airdrop, server-paid resume (existing path).
         await onTestnetDeploy();
@@ -160,7 +172,17 @@ export const FundDeployCard = ({
               {net} uses free test SOL — no payment needed.
             </div>
           )}
-          {insufficient && (
+          {canSelfDeploy && !loading && (
+            <div className="mt-1 text-[11px] text-emerald-300/90">
+              You deploy from your own wallet — sole owner from the first byte.
+              {sdProgress.phase === 'writing' && sdProgress.total
+                ? ` Uploading ${sdProgress.written}/${sdProgress.total}…`
+                : sdProgress.phase !== 'idle'
+                  ? ` ${sdProgress.phase}…`
+                  : ''}
+            </div>
+          )}
+          {insufficient && !canSelfDeploy && (
             <div className="mt-1 text-[11px] font-medium text-amber-300">
               Insufficient SOL — add at least {(sol - (estimate?.user_sol_balance ?? 0)).toFixed(4)}{' '}
               SOL to your wallet first.
@@ -182,7 +204,7 @@ export const FundDeployCard = ({
         <button
           type="button"
           onClick={handleConfirm}
-          disabled={busy || loading || insufficient}
+          disabled={busy || loading || (insufficient && !canSelfDeploy)}
           className="inline-flex items-center gap-1.5 rounded-md bg-emerald-400/90 px-3 py-1.5 text-xs font-semibold text-neutral-900 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {busy ? (

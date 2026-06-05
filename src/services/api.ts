@@ -314,6 +314,37 @@ export class ApiClient {
   }
 
   /**
+   * Non-custodial self-deploy (RFC-013) step 1: the backend rebuilds the .so with
+   * `declare_id!` pinned to the user's ephemeral program pubkey and returns it
+   * (base64), so the browser can deploy it from the user's own wallet.
+   */
+  async selfDeployArtifact(
+    uid: string,
+    programId: string,
+  ): Promise<{ program_id: string; so_base64: string; byte_len: number }> {
+    return apiFetch(ENDPOINTS.CONTRACT_SELF_DEPLOY_ARTIFACT(uid), {
+      method: 'POST',
+      body: JSON.stringify({ program_id: programId }),
+    });
+  }
+
+  /**
+   * Non-custodial self-deploy (RFC-013) final step: after the browser deploys,
+   * report the program id + deploy signature. The backend verifies on-chain that
+   * the user's wallet is the upgrade authority and records the deploy.
+   */
+  async selfDeployConfirm(
+    uid: string,
+    programId: string,
+    deploySignature: string,
+  ): Promise<{ program_id: string; upgrade_authority: string; network: string; recorded: boolean }> {
+    return apiFetch(ENDPOINTS.CONTRACT_SELF_DEPLOY_CONFIRM(uid), {
+      method: 'POST',
+      body: JSON.stringify({ program_id: programId, deploy_signature: deploySignature }),
+    });
+  }
+
+  /**
    * The contract's Anchor IDL for the instruction-aware action UI. Returns
    * `idl: null` (never 404) when the build produced none — callers degrade to
    * the static action menu.
