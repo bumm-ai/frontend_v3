@@ -79,11 +79,16 @@ export function deriveUIFromStatus(
  * auto-reconnect with backoff, fresh JWT on every reconnect). This hook owns
  * only the lazy code/audit getters and create mutations.
  */
-export function useContract(uid: string | null) {
+export function useContract(uid: string | null, resubscribeKey: number = 0) {
   // Status is sourced from useContractStream: single shared subscription via
   // wsHub (ref-counted), REST seed on uid change, and an in-memory cache so
   // project switches render immediately without a WS round-trip.
-  const { status } = useContractStream(uid);
+  //
+  // resubscribeKey lets the caller force a re-subscribe after a terminal phase
+  // tore the stream down (e.g. "Retry deploy" on a failed contract) — `uid`
+  // stays the same across a retry, so without this the dead stream never
+  // revives. See useContractStream for details.
+  const { status } = useContractStream(uid, resubscribeKey);
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError]         = useState<string | null>(null);

@@ -250,6 +250,22 @@ describe('deriveUIFromStatus — OPTIMISTIC pendingStep override', () => {
     expect(result.animationStage).toBe('deploying');
   });
 
+  it('pendingStep=deploy on a FAILED deploy (build_ok+audit_ok, no program_id) → publishing', () => {
+    // Retry-deploy scenario: a prior deploy failed mid-upload, leaving
+    // phase=failed with build_ok && audit_ok && !program_id. Clicking "Retry
+    // deploy" sets pendingStep='deploy'; the optimistic override must pull the
+    // UI out of the frozen failed state into the deploying animation
+    // immediately — otherwise the button stays on the failed-state Retry path
+    // and the user double-clicks into a 409.
+    const result = deriveUIFromStatus(
+      status({ phase: 'failed', build_ok: true, audit_ok: true }),
+      true,
+      'deploy',
+    );
+    expect(result.buttonState).toBe('publishing');
+    expect(result.animationStage).toBe('deploying');
+  });
+
   it('pendingStep=build but build_ok=true → NO override (step already done)', () => {
     const result = deriveUIFromStatus(
       status({ phase: 'done', build_ok: true }),

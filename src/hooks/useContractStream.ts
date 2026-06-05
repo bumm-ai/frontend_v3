@@ -95,7 +95,20 @@ export function deriveAnimationStage(
   return null;
 }
 
-export function useContractStream(uid: string | null): ContractStream {
+/**
+ * @param uid            - contract uid to stream, or null for no subscription.
+ * @param resubscribeKey - bump this integer to force a full re-subscribe
+ *   (WS + REST poll) even when `uid` is unchanged. Needed after a terminal
+ *   phase tears the stream down (see the terminal-close branch below): a
+ *   retry re-arms the pipeline on the backend but `uid` does not change, so
+ *   without this signal the dead stream would never revive and the
+ *   contract.status-driven transition effects (deploy-success message, etc.)
+ *   would never fire again.
+ */
+export function useContractStream(
+  uid: string | null,
+  resubscribeKey: number = 0,
+): ContractStream {
   const [status, setStatus] = useState<ContractStatus | null>(
     uid ? (statusCache.get(uid) ?? null) : null,
   );
@@ -181,7 +194,7 @@ export function useContractStream(uid: string | null): ContractStream {
       clearInterval(pollInterval);
       unsub?.();
     };
-  }, [uid]);
+  }, [uid, resubscribeKey]);
 
   const stage = deriveAnimationStage(status);
   return {

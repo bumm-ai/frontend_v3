@@ -58,7 +58,11 @@ export default function Dashboard() {
   // ── New v3 contract hook ────────────────────────────────────────────────────
   const [activeContractUid, setActiveContractUid] = useState<string | null>(null);
   const [pipelineMsgId, setPipelineMsgId] = useState<string | null>(null);
-  const contract = useContract(activeContractUid);
+  // Bumped on "Retry deploy" to force useContractStream to re-subscribe after a
+  // terminal (failed) phase tore its WS + poll down — `activeContractUid` does
+  // not change across a retry, so this is the only signal that revives it.
+  const [streamNonce, setStreamNonce] = useState(0);
+  const contract = useContract(activeContractUid, streamNonce);
 
   // Per-project status map — updated by useMultiContract for background projects
   const [projectStatuses, setProjectStatuses] = useState<Record<string, import('@/lib/api').ContractStatus>>({});
@@ -975,12 +979,40 @@ export default function Dashboard() {
   // No regenerate / rebuild needed: the .so is still in /builds/_cache.
   const handleRetryDeploy = useCallback(
     async (uid: string) => {
+      // Re-arm every status mechanism BEFORE the POST. After the prior deploy
+      // failed (terminal phase), all three abandoned this contract:
+      // useContractStream tore down its WS+poll, useMultiContract dropped its
+      // subscription, and the Dashboard REST poll removed it from
+      // trackedContracts. Without re-arming, the backend re-runs the deploy
+      // (rearm_failed_deploy) but the UI stays frozen on the failed snapshot —
+      // the user sees nothing, clicks again, and hits a 409. So we:
+      //   • set pendingStep='deploy' → deriveUIFromStatus shows 'publishing'
+      //     immediately (no dead-zone, the Retry button disappears → no 2nd click)
+      //   • re-add to trackedContracts → revives useMultiContract WS + Dashboard
+      //     poll, which overwrite the stale projectStatuses with live status
+      //   • drop the stale projectStatuses[uid]=failed so it can't out-prioritise
+      //     the incoming live status (it beats contract.status in `activeStatus`)
+      //   • bump streamNonce → useContractStream re-subscribes so the
+      //     contract.status transition effect ([E]) posts the deploy-success
+      //     message and marks the project deployed.
+      setActiveContractUid(uid);
+      setPendingStep({ projectId: uid, step: 'deploy' });
+      setProjectStatuses(prev => { const n = { ...prev }; delete n[uid]; return n; });
+      setTrackedContracts(prev => ({ ...prev, [uid]: uid }));
+      setStreamNonce(n => n + 1);
       try {
         await tryRefresh();
-        setActiveContractUid(uid);
         await apiClient.triggerDeploy(uid);
         addAIMessage('Retrying deploy…');
       } catch (err) {
+        // 409 = a deploy is already running for this contract (e.g. an earlier
+        // click already re-armed it). That's success, not failure — the live
+        // stream we just re-armed will show progress. Don't surface a red error.
+        if ((err as { status?: number })?.status === 409) {
+          addAIMessage('Deploy is already running — watch the progress above.');
+          return;
+        }
+        setPendingStep(null);
         addAIMessage(
           `Retry deploy failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
         );
