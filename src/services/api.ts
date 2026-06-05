@@ -25,6 +25,7 @@ import type {
   SubscribeResponse,
 } from '@/lib/api';
 import { balanceBus } from '@/services/balanceBus';
+import { createCoalescer } from '@/lib/coalesce';
 
 // ── Token helpers ─────────────────────────────────────────────────────────────
 
@@ -94,6 +95,15 @@ async function apiFetch<T>(
 
   return res.json() as Promise<T>;
 }
+
+// ── Status read coalescer (scaling #8) ──────────────────────────────────────
+// Sub-interval TTL: half the 5 s poll cadence, so two offset poll loops collapse
+// to ~1 request/window while keeping the viewed status fresh enough.
+const STATUS_COALESCE_TTL_MS = 2500;
+const contractStatusCoalescer = createCoalescer<ContractStatus>(
+  (uid) => apiFetch<ContractStatus>(ENDPOINTS.CONTRACT_STATUS(uid)),
+  STATUS_COALESCE_TTL_MS,
+);
 
 // ── ApiClient class ───────────────────────────────────────────────────────────
 
@@ -197,7 +207,17 @@ export class ApiClient {
   }
 
   async getContractStatus(uid: string): Promise<ContractStatus> {
-    return apiFetch(ENDPOINTS.CONTRACT_STATUS(uid));
+    // Coalesce REST status reads (#8): the active contract is polled by both
+    // useContractStream's fallback and the Dashboard global poll. Sharing
+    // in-flight requests + a sub-interval micro-cache collapses the per-tab
+    // fan-out to ~1 request/window without changing any call site. WS updates
+    // bypass this entirely (they don't go through getContractStatus).
+    return contractStatusCoalescer.get(uid);
+  }
+
+  /** Drop the coalescer cache for a uid (e.g. on project delete / hard refresh). */
+  invalidateContractStatus(uid: string): void {
+    contractStatusCoalescer.invalidate(uid);
   }
 
   async getContractCode(uid: string): Promise<ContractCode> {
