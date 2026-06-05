@@ -28,13 +28,11 @@ jobs:
       - name: Typecheck (tsc)
         run: npx tsc --noEmit
       - name: Lint (eslint)
-        # ── Non-blocking ────────────────────────────────────────────────
-        # eslint has a large PRE-EXISTING baseline (~730 errors, mostly
-        # react/no-unescaped-entities + no-unused-vars across legacy pages) —
-        # a dedicated cleanup sprint, like the backend's mypy debt was. New
-        # code is kept clean in review; flip this to blocking after the
-        # baseline is burned down. tsc + tests + build remain hard gates.
-        continue-on-error: true
+        # Blocking: the eslint baseline was burned down to ZERO errors (the
+        # "~730" was eslint scanning a stray .claude worktree's .next build
+        # output; the real source debt was 13 errors — 12 unescaped entities +
+        # 1 prefer-const — now fixed). 45 advisory warnings remain (eslint exits
+        # 0 on warnings); _-prefixed unused identifiers are config-ignored.
         run: npm run lint
       - name: Unit tests (vitest)
         run: npm test

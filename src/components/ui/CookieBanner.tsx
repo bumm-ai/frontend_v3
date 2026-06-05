@@ -46,7 +46,7 @@ export const CookieBanner = () => {
           {/* Content */}
           <p className="text-xs text-gray-300 mb-4 leading-relaxed">
             We use cookies to enhance your browsing experience, serve personalized content, and analyze our traffic. 
-            By clicking "Accept All", you consent to our use of cookies.
+            By clicking &quot;Accept All&quot;, you consent to our use of cookies.
           </p>
 
           {/* Links */}

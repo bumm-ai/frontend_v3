@@ -92,13 +92,13 @@ export default function PrivacyPage() {
               </p>
 
               <p>
-                <strong>9. Children's Privacy</strong><br/>
+                <strong>9. Children&apos;s Privacy</strong><br/>
                 Our services are not intended for children under 13 years of age. We do not knowingly collect personal information from children under 13. If we become aware that we have collected personal information from a child under 13, we will take steps to delete such information.
               </p>
 
               <p>
                 <strong>10. Changes to This Policy</strong><br/>
-                We may update this privacy policy from time to time. We will notify you of any changes by posting the new policy on this page and updating the "Last updated" date.
+                We may update this privacy policy from time to time. We will notify you of any changes by posting the new policy on this page and updating the &quot;Last updated&quot; date.
               </p>
 
               <p>

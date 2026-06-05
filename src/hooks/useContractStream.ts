@@ -148,9 +148,8 @@ export function useContractStream(uid: string | null): ContractStream {
     }, 5000);
 
     // Live updates via shared hub.
-    // eslint-disable-next-line prefer-const
-    let unsub: (() => void) | undefined;
-    unsub = wsHub.subscribe(
+     
+    const unsub = wsHub.subscribe(
       `contract:${uid}`,
       (data) => {
         if (!data || typeof data !== 'object') return;

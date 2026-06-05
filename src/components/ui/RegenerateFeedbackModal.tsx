@@ -119,7 +119,7 @@ export const RegenerateFeedbackModal = ({
 
               {pauseReport && (
                 <div className="mb-3 p-2.5 rounded-md bg-yellow-500/10 border border-yellow-500/20 text-yellow-200/90 text-[11px] leading-relaxed">
-                  <span className="font-medium">Why you're seeing this: </span>
+                  <span className="font-medium">Why you&apos;re seeing this: </span>
                   {pauseReport}
                 </div>
               )}

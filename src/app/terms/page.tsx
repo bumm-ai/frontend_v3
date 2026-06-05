@@ -40,7 +40,7 @@ export default function TermsPage() {
             <div className="text-sm leading-relaxed text-gray-300 space-y-4">
               <p>
                 <strong>1. Acceptance of Terms</strong><br/>
-                By accessing and using Bumm.io ("the Service"), you accept and agree to be bound by the terms and provision of this agreement. If you do not agree to abide by the above, please do not use this service.
+                By accessing and using Bumm.io (&quot;the Service&quot;), you accept and agree to be bound by the terms and provision of this agreement. If you do not agree to abide by the above, please do not use this service.
               </p>
 
               <p>
@@ -50,13 +50,13 @@ export default function TermsPage() {
               <ul className="list-disc list-inside ml-4 space-y-1">
                 <li>modify or copy the materials</li>
                 <li>use the materials for any commercial purpose or for any public display (commercial or non-commercial)</li>
-                <li>attempt to decompile or reverse engineer any software contained on Bumm.io's website</li>
+                <li>attempt to decompile or reverse engineer any software contained on Bumm.io&apos;s website</li>
                 <li>remove any copyright or other proprietary notations from the materials</li>
               </ul>
 
               <p>
                 <strong>3. Disclaimer</strong><br/>
-                The materials on Bumm.io are provided on an 'as is' basis. Bumm.io makes no warranties, expressed or implied, and hereby disclaims and negates all other warranties including without limitation, implied warranties or conditions of merchantability, fitness for a particular purpose, or non-infringement of intellectual property or other violation of rights.
+                The materials on Bumm.io are provided on an &apos;as is&apos; basis. Bumm.io makes no warranties, expressed or implied, and hereby disclaims and negates all other warranties including without limitation, implied warranties or conditions of merchantability, fitness for a particular purpose, or non-infringement of intellectual property or other violation of rights.
               </p>
 
               <p>
@@ -71,7 +71,7 @@ export default function TermsPage() {
 
               <p>
                 <strong>6. Links</strong><br/>
-                Bumm.io has not reviewed all of the sites linked to our website and is not responsible for the contents of any such linked site. The inclusion of any link does not imply endorsement by Bumm.io of the site. Use of any such linked website is at the user's own risk.
+                Bumm.io has not reviewed all of the sites linked to our website and is not responsible for the contents of any such linked site. The inclusion of any link does not imply endorsement by Bumm.io of the site. Use of any such linked website is at the user&apos;s own risk.
               </p>
 
               <p>

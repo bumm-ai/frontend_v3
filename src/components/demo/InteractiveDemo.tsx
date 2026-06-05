@@ -341,7 +341,7 @@ export default function InteractiveDemo() {
   const simulateManualTyping = (text: string, speed: number = 50): Promise<void> => {
     return new Promise((resolve) => {
       let currentIndex = 0;
-      let lastUpdateTime = 0;
+      const lastUpdateTime = 0;
       console.log('Typing text:', text, 'Speed:', speed);
 
       const typeInterval = setInterval(() => {
