@@ -153,16 +153,30 @@ export const InteractiveCodeEditor = ({
     onGenerationComplete?.();
   };
 
+  // Escape HTML so untrusted code is safe inside dangerouslySetInnerHTML.
+  const escapeHtml = (text: string): string => {
+    const map: { [key: string]: string } = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    };
+    return text.replace(/[&<>"']/g, (char) => map[char]);
+  };
+
   const highlightCode = (code: string) => {
     if (typeof window !== 'undefined' && Prism.languages.rust) {
       try {
         return Prism.highlight(code, Prism.languages.rust, 'rust');
       } catch (error) {
         console.warn('Prism highlighting failed:', error);
-        return code;
+        // Fallback must be escaped — raw code in innerHTML is an XSS sink (H5).
+        return escapeHtml(code);
       }
     }
-    return code;
+    // SSR / Prism-unavailable fallback — escape too.
+    return escapeHtml(code);
   };
 
   // No demo/placeholder code on platform — show only real content

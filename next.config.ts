@@ -25,27 +25,15 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  // Разрешаем доступ с любых хостов
+  // CORS is NOT set globally. Cross-origin access is handled per-route in
+  // src/app/api/proxy/route.ts, which checks Origin against an allowlist
+  // (ALLOWED_ORIGINS) and only echoes it back when permitted. The app is
+  // served same-origin to the browser and the /api/backend/* rewrites are
+  // same-origin too, so no global CORS header is needed. A global
+  // Access-Control-Allow-Origin:'*' previously overrode the proxy allowlist
+  // and weakened it — removed (H5).
   async headers() {
-    return [
-      {
-        source: '/(.*)',
-        headers: [
-          {
-            key: 'Access-Control-Allow-Origin',
-            value: '*',
-          },
-          {
-            key: 'Access-Control-Allow-Methods',
-            value: 'GET, POST, PUT, DELETE, OPTIONS',
-          },
-          {
-            key: 'Access-Control-Allow-Headers',
-            value: 'Content-Type, Authorization, x-user-id',
-          },
-        ],
-      },
-    ];
+    return [];
   },
 };
 

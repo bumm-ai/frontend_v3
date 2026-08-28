@@ -79,6 +79,7 @@ export function SubscriptionModal({ isOpen, onClose, status, onSubscribed }: Sub
         sendTransaction,
         treasury,
         plan.price_lamports,
+        `bumm:v1|kind=subscription|plan=${plan.plan_id}|net=mainnet`,
       );
       // 2. Wait for finalization (backend verifies at finalized commitment).
       await waitForFinalized(connection, signature);

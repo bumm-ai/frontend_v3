@@ -12,6 +12,7 @@ import type {
   ContractStatus,
   ContractCode,
   ContractAudit,
+  DebateAuditResponse,
   ContractListResponse,
   CreditHistoryResponse,
   CreditRatesResponse,
@@ -226,6 +227,16 @@ export class ApiClient {
 
   async getContractAudit(uid: string): Promise<ContractAudit> {
     return apiFetch(ENDPOINTS.CONTRACT_AUDIT(uid));
+  }
+
+  /**
+   * M1: run a paid on-demand multi-LLM (debate/ensemble) re-audit. Charges
+   * `credit_cost_debate` (12 credits) on success. Throws an Error whose
+   * `.status` is 402 (insufficient credits), 503 (not configured), or 409
+   * (no code) so callers can branch on the failure mode.
+   */
+  async debateAudit(uid: string): Promise<DebateAuditResponse> {
+    return apiFetch(ENDPOINTS.CONTRACT_DEBATE_AUDIT(uid), { method: 'POST' });
   }
 
   async listContracts(limit = 50, offset = 0, hasCode = true): Promise<ContractListResponse> {

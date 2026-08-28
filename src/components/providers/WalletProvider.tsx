@@ -12,12 +12,26 @@ import { Coin98WalletAdapter } from '@solana/wallet-adapter-coin98';
 import { TrustWalletAdapter } from '@solana/wallet-adapter-trust';
 import { clusterApiUrl } from '@solana/web3.js';
 
-export const SolanaWalletProvider: FC<{ children: ReactNode }> = ({ children }) => {
-    // Network можно изменить на 'mainnet-beta', 'testnet', или 'devnet'
-    const network = WalletAdapterNetwork.Devnet;
+// H7 Stage-0: network + RPC are env-driven so mainnet self-deploy is possible.
+// Defaults are unchanged (devnet + public clusterApiUrl) — behaviour is identical
+// until NEXT_PUBLIC_SOLANA_NETWORK / NEXT_PUBLIC_SOLANA_RPC_URL are set. A
+// dedicated RPC (Helius/QuickNode) is REQUIRED before enabling mainnet
+// self-deploy: public mainnet RPC throttles the many buffer-write txs.
+function resolveNetwork(): WalletAdapterNetwork {
+    const raw = (process.env.NEXT_PUBLIC_SOLANA_NETWORK || 'devnet').toLowerCase();
+    if (raw === 'mainnet-beta' || raw === 'mainnet') return WalletAdapterNetwork.Mainnet;
+    if (raw === 'testnet') return WalletAdapterNetwork.Testnet;
+    return WalletAdapterNetwork.Devnet;
+}
 
-    // RPC endpoint (можно использовать собственный RPC для лучшей производительности)
-    const endpoint = useMemo(() => clusterApiUrl(network), [network]);
+export const SolanaWalletProvider: FC<{ children: ReactNode }> = ({ children }) => {
+    const network = useMemo(() => resolveNetwork(), []);
+
+    // Prefer an explicit dedicated RPC endpoint; fall back to public clusterApiUrl.
+    const endpoint = useMemo(
+        () => process.env.NEXT_PUBLIC_SOLANA_RPC_URL?.trim() || clusterApiUrl(network),
+        [network],
+    );
 
     // Check if we're working through IP address (including external IP for team)
     const isIPAccess = useMemo(() => {

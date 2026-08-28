@@ -27,6 +27,7 @@ export const ENDPOINTS = {
   CONTRACT_STATUS:  (uid: string) => `/api/v1/contracts/${uid}/status`,
   CONTRACT_CODE:    (uid: string) => `/api/v1/contracts/${uid}/code`,
   CONTRACT_AUDIT:   (uid: string) => `/api/v1/contracts/${uid}/audit`,
+  CONTRACT_DEBATE_AUDIT: (uid: string) => `/api/v1/contracts/${uid}/debate-audit`,
   CONTRACT_CHAT:            (uid: string) => `/api/v1/contracts/${uid}/chat`,
   CONTRACT_UPDATE:          (uid: string) => `/api/v1/contracts/${uid}`,
   CONTRACT_DELETE:          (uid: string) => `/api/v1/contracts/${uid}`,

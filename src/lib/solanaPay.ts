@@ -1,10 +1,33 @@
 'use client';
 
 import type { Connection } from '@solana/web3.js';
-import { LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from '@solana/web3.js';
+import {
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+  TransactionInstruction,
+} from '@solana/web3.js';
 
 const FINALIZATION_TIMEOUT_MS = 60_000;
 const FINALIZATION_POLL_MS = 1_500;
+
+/** SPL Memo program — standard Solana program for on-chain text labels. */
+const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+
+/**
+ * Build a Memo instruction carrying a BUMM attribution tag. The signer is
+ * included as a read-only signer account so the memo is provably authored by
+ * the payer. Uses TextEncoder (not Buffer) — Buffer is not available in the
+ * browser bundle without a polyfill.
+ */
+function buildMemoInstruction(text: string, signer: PublicKey): TransactionInstruction {
+  return new TransactionInstruction({
+    programId: MEMO_PROGRAM_ID,
+    keys: [{ pubkey: signer, isSigner: true, isWritable: false }],
+    data: new TextEncoder().encode(text) as unknown as Buffer,
+  });
+}
 
 /**
  * Block until a transaction reaches `finalized` commitment.
@@ -54,6 +77,7 @@ export async function sendSolTransfer(
   sendTransaction: SendTransactionFn,
   recipient: string,
   lamports: number,
+  memo?: string,
 ): Promise<string> {
   if (!Number.isFinite(lamports) || lamports <= 0) {
     throw new Error('Invalid payment amount.');
@@ -67,6 +91,11 @@ export async function sendSolTransfer(
   const tx = new Transaction().add(
     SystemProgram.transfer({ fromPubkey, toPubkey, lamports: Math.round(lamports) }),
   );
+  // On-chain BUMM attribution tag (H4): makes the inflow/deploy provably
+  // BUMM-originated on a block explorer.
+  if (memo) {
+    tx.add(buildMemoInstruction(memo, fromPubkey));
+  }
   return sendTransaction(tx, connection);
 }
 

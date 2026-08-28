@@ -97,6 +97,15 @@ export interface ContractStatus {
   // Cumulative LLM spend (USD) attributed to this contract so far. Incremented
   // per LLM call by the backend budget ledger; drives the running-spend banner.
   cost_usd?: number;
+  // H6 — pubkey that holds the program's upgrade authority after a Bumm
+  // custodial deploy. Empty string when the transfer was skipped or failed
+  // (program still under the deployer). Present only on deployed-contract status.
+  upgrade_authority?: string;
+  // P5 — Pro Mode multi-file project map (path → source). Present + non-empty
+  // only for multi-file (Pro Mode) contracts; null/absent for single-file runs
+  // (today's default). When present the UI renders ProFileTree instead of the
+  // single-file editor; absence leaves the single-file path byte-identical.
+  files?: Record<string, string> | null;
 }
 
 export interface ContractCode {
@@ -107,6 +116,16 @@ export interface ContractCode {
 export interface ContractAudit {
   report: string;
   vulns: Array<{ severity?: string; title?: string; description?: string }>;
+}
+
+// M1: paid on-demand multi-LLM (debate/ensemble) re-audit.
+export interface DebateAuditResponse {
+  report: string;
+  vuln_count: number;
+  models_succeeded: number;
+  models_failed: number;
+  credits_charged: number;
+  remaining_credits: number;
 }
 
 // ── Credits ───────────────────────────────────────────────────────────────────
