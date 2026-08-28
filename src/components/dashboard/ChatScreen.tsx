@@ -1012,28 +1012,33 @@ export default function ChatScreen({
                   Unsaved code — click &ldquo;Save &amp; rebuild&rdquo;
                 </span>
               )}
-              <SmartActionButton
-                state={effectiveButtonState}
-                onClick={handleActionClick}
-                disabled={isBuilding || editorDirty}
-                isDeployed={isContractDeployed}
-                contractAddress={deployedContractAddress}
-                uid={currentProject?.uid}
-                isFrozen={contractIsFrozen}
-                onContractFreeze={handleContractFreeze}
-                upgradeAuthority={contractStatus?.upgrade_authority}
-              />
-              {/* M1: paid on-demand multi-LLM debate re-audit — offered once a
-                  contract has audited/deploy-ready code (not yet deployed). */}
-              {currentProject?.uid &&
-                !isContractDeployed &&
-                (effectiveButtonState === 'audit' ||
-                  effectiveButtonState === 'publish') && (
-                  <DebateAuditButton
-                    uid={currentProject.uid}
-                    disabled={isBuilding || editorDirty}
-                  />
-                )}
+              {/* The debate audit sits on the SAME row as the main action so it
+                  adds no vertical space; its report opens in a popover rather
+                  than inline, leaving this column's layout untouched. */}
+              <div className="flex items-center gap-1.5">
+                {/* M1: paid on-demand multi-LLM debate re-audit — offered once a
+                    contract has audited/deploy-ready code (not yet deployed). */}
+                {currentProject?.uid &&
+                  !isContractDeployed &&
+                  (effectiveButtonState === 'audit' ||
+                    effectiveButtonState === 'publish') && (
+                    <DebateAuditButton
+                      uid={currentProject.uid}
+                      disabled={isBuilding || editorDirty}
+                    />
+                  )}
+                <SmartActionButton
+                  state={effectiveButtonState}
+                  onClick={handleActionClick}
+                  disabled={isBuilding || editorDirty}
+                  isDeployed={isContractDeployed}
+                  contractAddress={deployedContractAddress}
+                  uid={currentProject?.uid}
+                  isFrozen={contractIsFrozen}
+                  onContractFreeze={handleContractFreeze}
+                  upgradeAuthority={contractStatus?.upgrade_authority}
+                />
+              </div>
             </div>
           </div>
         </div>
