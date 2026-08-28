@@ -11,7 +11,9 @@ import { Navigation } from '../ui/Navigation';
 import { InfoPanel } from '../ui/InfoPanel';
 import { DashboardFooter } from '../ui/DashboardFooter';
 import { InteractiveCodeEditor } from '../ui/InteractiveCodeEditor';
+import { ProFileTree } from '../ui/ProFileTree';
 import { SmartActionButton } from '../ui/SmartActionButton';
+import { DebateAuditButton } from '../ui/DebateAuditButton';
 import { RegenerateFeedbackModal } from '../ui/RegenerateFeedbackModal';
 import { ChatMessage, CodeSource, ActionButtonState, Project, User } from '@/types/dashboard';
 import type { AnimationStage } from '@/hooks/useContract';
@@ -24,6 +26,11 @@ import { FundDeployCard } from '../ui/FundDeployCard';
 import { RunningSpend } from '../ui/RunningSpend';
 import { BuildQueueChip } from '../ui/BuildQueueChip';
 import { useBuildQueue } from '@/hooks/useBuildQueue';
+import { BuildLogStream } from '../build/BuildLogStream';
+import { FixTimeline } from '../fix/FixTimeline';
+import { useFixDiff } from '@/hooks/useFixDiff';
+import { shouldStreamBuildLogs, shouldShowFixTimeline } from './chatScreenPanels';
+import { TemplateGallery } from '../ui/TemplateGallery';
 
 interface ChatScreenProps {
   messages: ChatMessage[];
@@ -167,6 +174,9 @@ export default function ChatScreen({
   };
   const messagesEndRefDesktop = useRef<HTMLDivElement>(null);
   const messagesEndRefMobile = useRef<HTMLDivElement>(null);
+  // Chat input refs — let the template gallery focus the box after pre-filling.
+  const inputRefDesktop = useRef<HTMLInputElement>(null);
+  const inputRefMobile = useRef<HTMLInputElement>(null);
   // Tracks the last project uid + API code seen by the load effect.
   // Used to distinguish project switches / initial async loads from live server updates
   // (e.g. auto-fix after build) so we choose the right code source without clobbering user edits.
@@ -221,9 +231,43 @@ export default function ChatScreen({
   const isPipelineBuilding   = animationStage === 'building';
   const isPipelineAuditing   = animationStage === 'auditing';
   const isPipelineDeploying  = animationStage === 'deploying';
+
+  // P5 — Pro Mode multi-file view. Backend surfaces `contractStatus.files`
+  // (path → source) ONLY for multi-file (Pro Mode) contracts; single-file runs
+  // leave it null/absent, so this is false today and the single-file editor
+  // path is byte-identical. We render the file-tree in place of the static
+  // single-file editor, but NOT during the transient pipeline-animation stages
+  // (generate/build/audit/deploy) — those are owned by InteractiveCodeEditor's
+  // internal stage components, so we defer to it while a stage is animating.
+  const proFiles = contractStatus?.files ?? null;
+  const showProFileTree =
+    !!proFiles &&
+    Object.keys(proFiles).length > 0 &&
+    !isGenerating &&
+    !isPipelineGenerating &&
+    !isPipelineBuilding &&
+    !isPipelineAuditing &&
+    !isPipelineDeploying;
+
   // Poll the global build-farm queue only while this contract is building;
   // the chip self-hides unless the farm is saturated.
   const buildQueue = useBuildQueue(isPipelineBuilding);
+
+  // F1 — live build-log stream + applied-fix timeline.
+  // Both read the ALREADY-derived animationStage / fix-history; they never
+  // re-map status → UI (deriveUIFromStatus stays the single source of truth).
+  const buildLogsActive = shouldStreamBuildLogs(currentProject?.uid, animationStage);
+  const {
+    entries: fixEntries,
+    isLoading: fixLoading,
+    error: fixError,
+  } = useFixDiff(currentProject?.uid);
+  const showFixTimeline = shouldShowFixTimeline(
+    currentProject?.uid,
+    fixEntries.length,
+    fixLoading,
+    fixError,
+  );
   const [isContractDeployed, setIsContractDeployed] = useState(() => {
     if (typeof window !== 'undefined' && currentProject) {
       try {
@@ -433,6 +477,19 @@ export default function ChatScreen({
     if (inputValue.trim()) {
       onSendMessage(inputValue.trim(), contractCode);
       setInputValue('');
+    }
+  };
+
+  // F3 — template gallery pick: soft flow. Pre-fill the chat input with the
+  // card's starter prompt and focus it (cursor at end) so the user can edit
+  // before hitting Generate. We never auto-submit.
+  const handlePickTemplate = (starterPrompt: string) => {
+    setInputValue(starterPrompt);
+    const input = inputRefDesktop.current ?? inputRefMobile.current;
+    if (input) {
+      input.focus();
+      const end = starterPrompt.length;
+      input.setSelectionRange(end, end);
     }
   };
 
@@ -711,18 +768,22 @@ export default function ChatScreen({
           <div ref={messagesEndRefDesktop} />
           
           {messages.length === 0 && (
-            <div className="text-center text-[#666] py-12">
-              <Bot className="w-12 h-12 mx-auto mb-4 text-[#333]" />
-              <p>Start a conversation with AI agents to build your smart contract</p>
+            <div className="py-8">
+              <div className="text-center text-[#666] mb-2">
+                <Bot className="w-12 h-12 mx-auto mb-4 text-[#333]" />
+                <p>Start a conversation with AI agents to build your smart contract</p>
+              </div>
+              <TemplateGallery onPick={handlePickTemplate} />
             </div>
           )}
         </div>
-        
+
             {/* Fixed Input - sticky at bottom */}
             <div className="border-t border-[#191919] bg-[#0C0C0C] flex-shrink-0">
               <div className="px-3 pt-2 pb-2 h-14 flex items-center">
           <div className="flex gap-2 w-full">
             <input
+              ref={inputRefDesktop}
               type="text"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
@@ -743,7 +804,7 @@ export default function ChatScreen({
           </div>
         </div>
       </div>
-      
+
           {/* Center Panel - Smart Contract Preview (40%) */}
           <div className="w-[calc(40%-1px)] flex flex-col bg-[#0A0A0A] border border-[#333] rounded">
         {/* Fixed Header */}
@@ -853,6 +914,11 @@ export default function ChatScreen({
 
             {/* Interactive Code Area - flex-1 to fill space */}
             <div className="flex-1 p-3 min-h-0">
+            {/* P5 — Pro Mode multi-file projects render a file-tree; single-file
+                contracts (files=null) fall through to the unchanged editor. */}
+            {showProFileTree && proFiles ? (
+              <ProFileTree files={proFiles} />
+            ) : (
             <InteractiveCodeEditor
               key={currentProject?.uid ?? 'no-project'}
               initialCode={contractCode}
@@ -881,8 +947,32 @@ export default function ChatScreen({
               }
               deployedProgramId={contractStatus?.program_id ?? null}
             />
+            )}
         </div>
-        
+
+            {/* F1 — live build output + applied-fix timeline.
+                Sits below the editor; collapses entirely when there is nothing
+                to show. Bounded + scrollable so it never starves the editor. */}
+            {(buildLogsActive || showFixTimeline) && currentProject?.uid && (
+              <div className="px-3 pb-2 flex-shrink-0 max-h-72 overflow-y-auto space-y-2">
+                {buildLogsActive && (
+                  <BuildLogStream uid={currentProject.uid} active={buildLogsActive} />
+                )}
+                {showFixTimeline && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-gray-500 px-0.5 pb-1">
+                      Applied fixes
+                    </div>
+                    <FixTimeline
+                      entries={fixEntries}
+                      isLoading={fixLoading}
+                      error={fixError}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Fixed Bottom Section */}
             <div className="px-3 pt-2 pb-2 border-t border-[#191919] bg-[#0A0A0A] flex-shrink-0 h-14 flex items-center">
           <div className="flex items-center justify-between w-full">
@@ -931,12 +1021,24 @@ export default function ChatScreen({
                 uid={currentProject?.uid}
                 isFrozen={contractIsFrozen}
                 onContractFreeze={handleContractFreeze}
+                upgradeAuthority={contractStatus?.upgrade_authority}
               />
+              {/* M1: paid on-demand multi-LLM debate re-audit — offered once a
+                  contract has audited/deploy-ready code (not yet deployed). */}
+              {currentProject?.uid &&
+                !isContractDeployed &&
+                (effectiveButtonState === 'audit' ||
+                  effectiveButtonState === 'publish') && (
+                  <DebateAuditButton
+                    uid={currentProject.uid}
+                    disabled={isBuilding || editorDirty}
+                  />
+                )}
             </div>
           </div>
         </div>
       </div>
-      
+
           {/* Right Panel - Network Panel (20%) */}
           <div className="w-[calc(20%-1px)] flex flex-col">
             <InfoPanel 
@@ -1024,12 +1126,23 @@ export default function ChatScreen({
               
               {/* Этот пустой div является "якорем", к которому мы всегда скроллим */}
               <div ref={messagesEndRefMobile} />
+
+              {messages.length === 0 && (
+                <div className="py-6">
+                  <div className="text-center text-[#666] mb-2">
+                    <Bot className="w-10 h-10 mx-auto mb-3 text-[#333]" />
+                    <p className="text-sm">Start a conversation to build your smart contract</p>
+                  </div>
+                  <TemplateGallery onPick={handlePickTemplate} />
+                </div>
+              )}
             </div>
-            
+
             {/* Input field */}
             <div className="px-2 pt-2 pb-2 h-14 flex items-center flex-shrink-0">
               <div className="flex gap-2 w-full">
                 <input
+                  ref={inputRefMobile}
                   type="text"
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
@@ -1121,6 +1234,10 @@ export default function ChatScreen({
 
             {/* Interactive Code Area */}
             <div className="flex-1 p-2 min-h-0">
+              {/* P5 — Pro Mode multi-file file-tree; single-file falls through. */}
+              {showProFileTree && proFiles ? (
+                <ProFileTree files={proFiles} />
+              ) : (
               <InteractiveCodeEditor
                 key={currentProject?.uid ?? 'no-project'}
                 initialCode={contractCode}
@@ -1149,8 +1266,30 @@ export default function ChatScreen({
                 placeholder="Paste your smart contract here or chat with AI to generate one..."
                 useRealApi
               />
+              )}
             </div>
-            
+
+            {/* F1 — live build output + applied-fix timeline (mobile). */}
+            {(buildLogsActive || showFixTimeline) && currentProject?.uid && (
+              <div className="px-2 pb-2 flex-shrink-0 max-h-72 overflow-y-auto space-y-2">
+                {buildLogsActive && (
+                  <BuildLogStream uid={currentProject.uid} active={buildLogsActive} />
+                )}
+                {showFixTimeline && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-gray-500 px-0.5 pb-1">
+                      Applied fixes
+                    </div>
+                    <FixTimeline
+                      entries={fixEntries}
+                      isLoading={fixLoading}
+                      error={fixError}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Fixed Bottom Section */}
             <div className="px-2 pt-2 pb-2 border-t border-[#191919] bg-[#0A0A0A] flex-shrink-0 h-14 flex items-center">
               <div className="flex items-center justify-between w-full">
@@ -1184,6 +1323,7 @@ export default function ChatScreen({
                     uid={currentProject?.uid}
                     isFrozen={contractIsFrozen}
                     onContractFreeze={handleContractFreeze}
+                    upgradeAuthority={contractStatus?.upgrade_authority}
                   />
                 </div>
               </div>

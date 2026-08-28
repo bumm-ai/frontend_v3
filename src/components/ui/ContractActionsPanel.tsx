@@ -18,6 +18,7 @@ import { resolveProgramId } from '@/lib/anchorIx';
 import { buildExplorerUrl } from '@/lib/explorer';
 import { InstructionActionForm } from './InstructionActionForm';
 import { NativeProgramActions } from './NativeProgramActions';
+import { ContractTxHistory } from './ContractTxHistory';
 
 interface ContractActionsPanelProps {
   /** Contract UID used to fetch the IDL. */
@@ -26,6 +27,9 @@ interface ContractActionsPanelProps {
   contractAddress?: string;
   /** Network override; otherwise taken from the IDL response. */
   network?: string;
+  /** H6 — wallet holding the program's upgrade authority (status.upgrade_authority).
+   * Empty/undefined → custodial transfer failed; NativeProgramActions warns. */
+  upgradeAuthority?: string;
   onClose: () => void;
 }
 
@@ -33,6 +37,7 @@ export function ContractActionsPanel({
   uid,
   contractAddress,
   network,
+  upgradeAuthority,
   onClose,
 }: ContractActionsPanelProps) {
   const [loading, setLoading] = useState(true);
@@ -249,6 +254,22 @@ export function ContractActionsPanel({
               <div className="pt-3">
                 <NativeProgramActions
                   programId={programId}
+                  network={effectiveNetwork}
+                  upgradeAuthority={upgradeAuthority}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* M3 "Solscan-lite" — recent on-chain activity for the deployed
+              program. Shown only once we have a resolved program id (i.e. the
+              contract is deployed). Reads the same env-parameterised connection
+              as the rest of the app. */}
+          {!loading && displayProgramId && (
+            <div className="pt-1 border-t border-[#2a2a2a]">
+              <div className="pt-3">
+                <ContractTxHistory
+                  programId={displayProgramId}
                   network={effectiveNetwork}
                 />
               </div>

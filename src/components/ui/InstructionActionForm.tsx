@@ -23,6 +23,7 @@ import {
   buildInstruction,
 } from '@/lib/anchorIx';
 import { parseArgValue, describeType, type ParsedArg } from '@/lib/anchorTypes';
+import { tryDerivePda, type PdaDeriveResult } from '@/lib/pdaDerive';
 import { waitForFinalized } from '@/lib/solanaPay';
 import { buildExplorerUrl } from '@/lib/explorer';
 
@@ -59,12 +60,26 @@ export function InstructionActionForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [signature, setSignature] = useState<string | null>(null);
+  // Accounts the user has chosen to fill manually instead of auto-deriving.
+  const [pdaOverrides, setPdaOverrides] = useState<Record<string, boolean>>({});
 
   const args = useMemo(() => instruction.args ?? [], [instruction.args]);
   const accounts = useMemo(
     () => instruction.accounts ?? [],
     [instruction.accounts],
   );
+
+  // Auto-derive every PDA account from the current arg/account form state.
+  // Recomputes whenever a dependent value changes (reactivity requirement F2).
+  const pdaDerivations = useMemo(() => {
+    const out: Record<string, PdaDeriveResult> = {};
+    for (const acc of accounts) {
+      if (acc.pda == null) continue;
+      const r = tryDerivePda(acc.pda, programId, argValues, accountValues);
+      if (r) out[acc.name] = r;
+    }
+    return out;
+  }, [accounts, programId, argValues, accountValues]);
 
   const resetResult = () => {
     setError(null);
@@ -106,13 +121,27 @@ export function InstructionActionForm({
     const metas: AccountMeta[] = [];
     for (const acc of accounts) {
       let pubkey: PublicKey;
+      const derivation = pdaDerivations[acc.name];
+      const usingDerived =
+        derivation?.status === 'derived' && !pdaOverrides[acc.name];
       if (isSigner(acc)) {
         pubkey = publicKey;
       } else if (isSystemProgram(acc)) {
         pubkey = SystemProgram.programId;
+      } else if (usingDerived) {
+        // Trust the locally-derived PDA address (already a valid PublicKey).
+        pubkey = new PublicKey(derivation.address);
       } else {
         const raw = (accountValues[acc.name] ?? '').trim();
         if (raw === '') {
+          // If a PDA is mid-derivation, point the user at the missing input.
+          if (derivation?.status === 'pending' && !pdaOverrides[acc.name]) {
+            const { field, source } = derivation.missing;
+            return {
+              ok: false,
+              error: `Account "${acc.name}" (PDA): fill ${source} "${field}" to auto-derive, or enter the address manually.`,
+            };
+          }
           return { ok: false, error: `Account "${acc.name}" is required.` };
         }
         try {
@@ -261,6 +290,16 @@ export function InstructionActionForm({
                     ? 'System Program'
                     : null;
                 const hasPda = acc.pda != null;
+                const derivation = pdaDerivations[acc.name];
+                const overridden = pdaOverrides[acc.name] === true;
+                // Show the read-only derived field only when a PDA resolved and
+                // the user has not switched to manual override.
+                const showDerived =
+                  derivation?.status === 'derived' && !overridden;
+                const toggleOverride = () => {
+                  setPdaOverrides((p) => ({ ...p, [acc.name]: !overridden }));
+                  resetResult();
+                };
                 return (
                   <div key={acc.name}>
                     <span className="text-xs text-gray-400 font-mono">
@@ -273,6 +312,27 @@ export function InstructionActionForm({
                       <div className="mt-1 w-full bg-[#0f0f0f] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-gray-500 italic">
                         auto-filled: {auto}
                       </div>
+                    ) : showDerived ? (
+                      <>
+                        <div className="mt-1 flex items-center gap-2">
+                          <input
+                            type="text"
+                            readOnly
+                            value={derivation.address}
+                            className="flex-1 bg-[#0f0f0f] border border-emerald-600/40 rounded px-2 py-1.5 text-xs text-emerald-300 font-mono focus:outline-none cursor-default"
+                          />
+                          <span className="shrink-0 text-[9px] uppercase tracking-wide text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-1.5 py-1">
+                            PDA · derived
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={toggleOverride}
+                          className="mt-1 text-[10px] text-gray-500 hover:text-gray-300 underline"
+                        >
+                          Enter address manually instead
+                        </button>
+                      </>
                     ) : (
                       <>
                         <input
@@ -288,10 +348,31 @@ export function InstructionActionForm({
                           placeholder="paste base58 address"
                           className="mt-1 w-full bg-[#0f0f0f] border border-[#2a2a2a] rounded px-2 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-[#FE4A01]/60"
                         />
-                        {hasPda && (
+                        {hasPda && derivation?.status === 'pending' && !overridden && (
+                          <p className="mt-1 text-[10px] text-amber-400/80">
+                            PDA — fill {derivation.missing.source} &quot;
+                            {derivation.missing.field}&quot; to auto-derive the
+                            address, or enter it manually.
+                          </p>
+                        )}
+                        {hasPda && derivation?.status === 'error' && !overridden && (
+                          <p className="mt-1 text-[10px] text-amber-400/80">
+                            {derivation.message}
+                          </p>
+                        )}
+                        {hasPda && overridden && (
+                          <button
+                            type="button"
+                            onClick={toggleOverride}
+                            className="mt-1 text-[10px] text-gray-500 hover:text-gray-300 underline"
+                          >
+                            Use auto-derived PDA instead
+                          </button>
+                        )}
+                        {hasPda && !derivation && !overridden && (
                           <p className="mt-1 text-[10px] text-amber-400/80">
                             This is a PDA — derive it yourself and paste the
-                            address (no auto-derivation).
+                            address.
                           </p>
                         )}
                       </>

@@ -117,6 +117,7 @@ export const FundDeployCard = ({
         sendTransaction,
         estimate.deployer_pubkey,
         lamports,
+        `bumm:v1|kind=deploy|net=${net}`,
       );
       // 2. Wait for finalization (backend verifies at finalized commitment).
       await waitForFinalized(connection, signature);

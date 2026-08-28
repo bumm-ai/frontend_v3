@@ -18,6 +18,9 @@ interface SmartActionButtonProps {
   uid?: string;
   isFrozen?: boolean;
   onContractFreeze?: () => void;
+  /** H6 — wallet holding the program's upgrade authority (status.upgrade_authority).
+   * Empty/undefined means the custodial transfer failed; the Actions panel warns. */
+  upgradeAuthority?: string;
 }
 
 export const SmartActionButton = ({ 
@@ -28,7 +31,8 @@ export const SmartActionButton = ({
   contractAddress,
   uid,
   isFrozen = false,
-  onContractFreeze
+  onContractFreeze,
+  upgradeAuthority,
 }: SmartActionButtonProps) => {
   const getButtonConfig = () => {
     switch (state) {
@@ -194,6 +198,7 @@ export const SmartActionButton = ({
         <ContractActionsPanel
           uid={uid}
           contractAddress={contractAddress}
+          upgradeAuthority={upgradeAuthority}
           onClose={() => setShowActions(false)}
         />
       )}

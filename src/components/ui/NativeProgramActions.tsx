@@ -24,6 +24,13 @@ import { buildExplorerUrl } from '@/lib/explorer';
 interface NativeProgramActionsProps {
   programId: PublicKey;
   network: string;
+  /**
+   * Wallet that holds the program's upgrade authority (status.upgrade_authority).
+   * Empty / undefined means the custodial-to-user transfer failed or was skipped,
+   * so the program is still under the Bumm deployer key and these wallet-signed
+   * authority actions will NOT succeed from the user's wallet.
+   */
+  upgradeAuthority?: string;
 }
 
 type ActionId = 'transfer' | 'immutable' | 'close';
@@ -37,9 +44,15 @@ type ActionId = 'transfer' | 'immutable' | 'close';
 export function NativeProgramActions({
   programId,
   network,
+  upgradeAuthority,
 }: NativeProgramActionsProps) {
   const { publicKey, sendTransaction, connected } = useWallet();
   const { connection } = useConnection();
+
+  // H6 — when the custodial-to-user authority transfer failed/was skipped the
+  // program is still owned by the Bumm deployer, so these actions can't be
+  // signed from the user's wallet. Warn loudly so the user doesn't waste a tx.
+  const authorityTransferFailed = !upgradeAuthority;
 
   const [open, setOpen] = useState<ActionId | null>(null);
   const [newAuthority, setNewAuthority] = useState('');
@@ -165,6 +178,16 @@ export function NativeProgramActions({
       <p className="text-[10px] uppercase tracking-wide text-gray-500">
         Manage program
       </p>
+      {authorityTransferFailed && (
+        <div className="flex items-start gap-2 text-[11px] rounded p-2 border text-amber-300 bg-amber-500/10 border-amber-500/30">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>
+            Custodial authority transfer failed — this program is still under the
+            Bumm deployer key. Authority actions below cannot be signed from your
+            wallet until the transfer succeeds.
+          </span>
+        </div>
+      )}
       {!connected && (
         <p className="text-[11px] text-amber-400/80">
           Connect the wallet that holds the upgrade authority to run these.
