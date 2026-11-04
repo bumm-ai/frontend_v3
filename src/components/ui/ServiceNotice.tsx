@@ -3,66 +3,43 @@
 /**
  * Service-status notice while the backend is offline.
  *
- * Shown as a modal on the first visit of a session and again when a wallet
- * connects, plus a small pill that stays on screen and reopens it. Hidden on
- * pages that work without the backend (/demo) and on the legal pages.
+ * The modal opens when someone presses "Start Building" (instead of the
+ * wallet dialog — nothing past it works without the backend) or the small
+ * "Closed testing" pill that stays on screen. Hidden on pages that work
+ * without the backend (/demo) and on the legal pages.
  *
  * Turn off at relaunch without a code change: set
- * NEXT_PUBLIC_SERVICE_NOTICE=off in the Vercel project and redeploy.
+ * NEXT_PUBLIC_SERVICE_NOTICE=off in the Vercel project and redeploy —
+ * "Start Building" then opens the wallet dialog again.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
-import { useWallet } from '@solana/wallet-adapter-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { FlaskConical, X } from 'lucide-react';
 
-const ENABLED = process.env.NEXT_PUBLIC_SERVICE_NOTICE !== 'off';
+export const SERVICE_NOTICE_ENABLED = process.env.NEXT_PUBLIC_SERVICE_NOTICE !== 'off';
 const HIDDEN_PREFIXES = ['/demo', '/terms', '/privacy', '/cookies'];
-const SEEN_KEY = 'bumm_service_notice_seen';
-const SEEN_CONNECTED_KEY = 'bumm_service_notice_seen_connected';
+const OPEN_EVENT = 'bumm:service-notice:open';
 
-function readFlag(key: string): boolean {
-  try {
-    return sessionStorage.getItem(key) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function writeFlag(key: string): void {
-  try {
-    sessionStorage.setItem(key, '1');
-  } catch {
-    // storage blocked (private mode) — the notice simply shows again
-  }
+/** Open the notice from anywhere (e.g. the "Start Building" button). */
+export function openServiceNotice(): void {
+  window.dispatchEvent(new Event(OPEN_EVENT));
 }
 
 export function ServiceNotice() {
   const pathname = usePathname() ?? '/';
-  const { connected } = useWallet();
   const [open, setOpen] = useState(false);
-  const wasConnected = useRef(connected);
-  const hidden = !ENABLED || HIDDEN_PREFIXES.some((p) => pathname.startsWith(p));
+  const hidden = !SERVICE_NOTICE_ENABLED || HIDDEN_PREFIXES.some((p) => pathname.startsWith(p));
 
-  // First visit of the session.
   useEffect(() => {
-    if (!hidden && !readFlag(SEEN_KEY)) setOpen(true);
+    if (hidden) return;
+    const onOpen = () => setOpen(true);
+    window.addEventListener(OPEN_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_EVENT, onOpen);
   }, [hidden]);
 
-  // A wallet connects (incl. autoConnect) — once per session.
-  useEffect(() => {
-    if (!hidden && connected && !wasConnected.current && !readFlag(SEEN_CONNECTED_KEY)) {
-      setOpen(true);
-    }
-    wasConnected.current = connected;
-  }, [connected, hidden]);
-
-  const close = () => {
-    setOpen(false);
-    writeFlag(SEEN_KEY);
-    if (connected) writeFlag(SEEN_CONNECTED_KEY);
-  };
+  const close = () => setOpen(false);
 
   if (hidden) return null;
 
