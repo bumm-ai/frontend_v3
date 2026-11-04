@@ -74,7 +74,7 @@ export default function Footer() {
               </motion.a>
             </div>
             <div className="text-xs text-gray-500">
-              © 2026 Bumm.io
+              © 2026 KRSGT LLC. BUMM is a product of KRSGT LLC, Kyiv, Ukraine.
             </div>
           </div>
 
