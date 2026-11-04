@@ -5,6 +5,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { useState, useEffect } from 'react';
 import { Rocket, Loader2 } from 'lucide-react';
 import { WalletModal } from './WalletModal';
+import { SERVICE_NOTICE_ENABLED, openServiceNotice } from './ServiceNotice';
 
 interface StartBuildingButtonProps {
   onLogin: () => void;
@@ -26,6 +27,12 @@ export const StartBuildingButton = ({ onLogin }: StartBuildingButtonProps) => {
   }, [connected, isTransitioning, onLogin]);
 
   const handleStartBuilding = () => {
+    // Closed testing: the backend is offline, so explain instead of
+    // starting a wallet flow that leads nowhere.
+    if (SERVICE_NOTICE_ENABLED) {
+      openServiceNotice();
+      return;
+    }
     if (connected) {
       // If wallet is already connected, transition immediately
       onLogin();

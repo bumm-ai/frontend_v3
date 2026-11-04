@@ -45,7 +45,7 @@ export const DashboardFooter = () => {
               AI-powered code generation and deployment on Solana
             </div>
             <div className="text-xs text-gray-500">
-              © 2026 Bumm.io
+              © 2026 KRSGT LLC. BUMM is a product of KRSGT LLC, Kyiv, Ukraine.
             </div>
             
             {/* Social Media на мобильных - под копирайтом */}

@@ -39,6 +39,10 @@ export default function TermsPage() {
           <div className="bg-[#191919] border border-[#333] rounded-lg p-6 space-y-6">
             <div className="text-sm leading-relaxed text-gray-300 space-y-4">
               <p>
+                Bumm.io (&quot;the Service&quot;) is operated by KRSGT LLC (ТОВ «КРСГТ»), a company registered in Kyiv, Ukraine, EDRPOU 45982886 (&quot;we&quot;, &quot;us&quot;). BUMM is a product of KRSGT LLC.
+              </p>
+
+              <p>
                 <strong>1. Acceptance of Terms</strong><br/>
                 By accessing and using Bumm.io (&quot;the Service&quot;), you accept and agree to be bound by the terms and provision of this agreement. If you do not agree to abide by the above, please do not use this service.
               </p>

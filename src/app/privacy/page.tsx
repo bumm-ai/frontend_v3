@@ -39,6 +39,10 @@ export default function PrivacyPage() {
           <div className="bg-[#191919] border border-[#333] rounded-lg p-6 space-y-6">
             <div className="text-sm leading-relaxed text-gray-300 space-y-4">
               <p>
+                KRSGT LLC (ТОВ «КРСГТ»), a company registered in Kyiv, Ukraine, EDRPOU 45982886, operates Bumm.io and is the controller of the personal data processed through it. Contact: privacy@bumm.io
+              </p>
+
+              <p>
                 <strong>1. Information We Collect</strong><br/>
                 We collect information you provide directly to us, such as when you create an account, use our services, or contact us for support. This may include your name, email address, and any other information you choose to provide.
               </p>
